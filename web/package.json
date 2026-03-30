@@ -2,12 +2,15 @@
   "name": "web",
   "version": "1.0.0",
   "description": "",
-  "main": "tailwind.config.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "chmod +x node_modules/.bin/vite || true",
     "build": "vite build",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [],
   "author": "",
