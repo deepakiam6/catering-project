@@ -1,10 +1,10 @@
 [build]
   base    = "web"
   command = "npm ci && npm run build"
-  publish = "web/dist"
+  publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "20"
 
 [[redirects]]
   from   = "/*"
