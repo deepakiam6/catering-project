@@ -1,5 +1,7 @@
 import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { setAuth } from "../../utils/auth";
+
 
 const AdminLogin = () => {
   const navigate = useNavigate();
@@ -9,15 +11,39 @@ const AdminLogin = () => {
   const [error,    setError]    = useState("");
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!email || !password) { setError("Please fill all fields"); return; }
-    if (email === "123@gmail.com" && password === "123") {
+  e.preventDefault();
+
+  if (!email || !password) {
+    setError("Please fill all fields");
+    return;
+  }
+  // 🔐 ADMIN LOGIN (ADD THIS BACK)
+  if (email.trim() === "admin" && password === "admin123") {
+    setError("");
+    setAuth({ role: "admin" });
+    navigate("/admin/dashboard");
+    return;
+  }
+
+  // 👨‍💼 MANAGER LOGIN
+  try {
+    const managers = JSON.parse(localStorage.getItem("managers") || "[]");
+
+    const match = managers.find(
+      (m: { phone: string; password: string }) =>
+        m.phone === email.trim() && m.password === password
+    );
+
+    if (match) {
       setError("");
-      navigate("/admin/dashboard");
-    } else {
-      setError("Invalid email or password");
+      setAuth({ role: "manager", phone: match.phone });
+      navigate("/manager/dashboard");
+      return;
     }
-  };
+  } catch {}
+
+  setError("Invalid credentials");
+};
 
   return (
     <div
@@ -186,7 +212,7 @@ const AdminLogin = () => {
               className="text-green-500 text-sm mt-1.5"
               style={{ fontFamily: "sans-serif" }}
             >
-              Sign in to your admin account
+              Sign in to your account
             </p>
           </div>
 
@@ -199,11 +225,11 @@ const AdminLogin = () => {
                 className="text-xs font-bold uppercase tracking-widest text-green-700"
                 style={{ fontFamily: "sans-serif" }}
               >
-                Email
+                Phone / Username
               </label>
               <input
-                type="email"
-                placeholder="admin@example.com"
+                type="text"
+                placeholder="Enter phone or username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full border border-green-200 rounded-xl px-4 py-3 text-sm text-green-950 bg-green-50/60 outline-none placeholder-green-300 focus:border-green-600 focus:ring-2 focus:ring-green-600/15 transition"
