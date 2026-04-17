@@ -230,7 +230,7 @@ const ManagerDashboard = () => {
     setDates(arr);
   }, []);
 
-  const handleLogout = () => { clearAuth(); navigate("/admin/login"); };
+  const handleLogout = () => { clearAuth(); navigate("/admin/login", { replace: true }); };
 
   const filteredEvents =
     selectedDate === null

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useBackNavigation } from "../../hooks/useBackNavigation";
 
 type MenuCategory = {
   id: string;
@@ -108,6 +109,7 @@ const normaliseVersions = (raw: BookingData[]): BookingVersion[] => {
 const BookFoodDashboard = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useBackNavigation({ role: "client" });
 
   const [versions, setVersions] = useState<BookingVersion[]>([]);
   const [activeVersion, setActiveVersion] = useState<number>(0);
@@ -242,7 +244,7 @@ const BookFoodDashboard = () => {
             No saved food versions were found for this event.
           </p>
           <button
-            onClick={() => navigate(-1)}
+            onClick={goBack}
             style={{
               border: "none",
               borderRadius: 12,
@@ -332,7 +334,7 @@ const BookFoodDashboard = () => {
           }}
         >
           <button
-            onClick={() => navigate(-1)}
+            onClick={goBack}
             style={{
               border: "1px solid rgba(15, 23, 42, 0.08)",
               background: "#fff",

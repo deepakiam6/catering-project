@@ -1,17 +1,61 @@
 import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { useLoading } from "../../context/LoadingContext";
 import { setAuth } from "../../utils/auth";
 
 
 const AdminLogin = () => {
+  const [touchStartX, setTouchStartX] = useState(0);
+  const [touchEndX, setTouchEndX] = useState(0);
   const navigate = useNavigate();
+  const { isLoading } = useLoading();
 
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [error,    setError]    = useState("");
+  const handleTouchStart = (e: React.TouchEvent) => {
+  setTouchStartX(e.changedTouches[0].screenX);
+};
+
+const handleTouchEnd = (e: React.TouchEvent) => {
+  setTouchEndX(e.changedTouches[0].screenX);
+
+  const distance = e.changedTouches[0].screenX - touchStartX;
+
+  if (distance > 100) {
+    if (window.location.pathname.startsWith("/admin")) {
+      navigate("/admin/dashboard", { replace: true });
+    } else {
+      navigate("/", { replace: true });
+    }
+  }
+
+};
+
+// 🖱 Mouse support
+let mouseDownX = 0;
+
+const handleMouseDown = (e: React.MouseEvent) => {
+  mouseDownX = e.clientX;
+};
+
+const handleMouseUp = (e: React.MouseEvent) => {
+  const distance = e.clientX - mouseDownX;
+
+  if (distance > 100) {
+    if (window.location.pathname.startsWith("/admin")) {
+      navigate("/admin/dashboard", { replace: true });
+    } else {
+      navigate("/", { replace: true });
+    }
+  }
+
+};
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
   e.preventDefault();
+
+  if (isLoading) return;
 
   if (!email || !password) {
     setError("Please fill all fields");
@@ -21,7 +65,7 @@ const AdminLogin = () => {
   if (email.trim() === "admin" && password === "admin123") {
     setError("");
     setAuth({ role: "admin" });
-    navigate("/admin/dashboard");
+    navigate("/admin/dashboard", { replace: true });
     return;
   }
 
@@ -37,7 +81,7 @@ const AdminLogin = () => {
     if (match) {
       setError("");
       setAuth({ role: "manager", phone: match.phone });
-      navigate("/manager/dashboard");
+      navigate("/manager/dashboard", { replace: true });
       return;
     }
   } catch {}
@@ -49,6 +93,10 @@ const AdminLogin = () => {
     <div
       className="min-h-screen flex"
       style={{ fontFamily: "'Georgia', serif" }}
+      onTouchStart={handleTouchStart}
+  onTouchEnd={handleTouchEnd}
+  onMouseDown={handleMouseDown}
+  onMouseUp={handleMouseUp}
     >
       {/* ══════════ LEFT PANEL — Hero / Brand ══════════ */}
       <div
@@ -75,6 +123,7 @@ const AdminLogin = () => {
             filter: "blur(50px)",
           }}
         />
+        
         {/* Grain */}
         <div
           className="absolute inset-0 opacity-[0.035] pointer-events-none"
@@ -269,11 +318,14 @@ const AdminLogin = () => {
             {/* Submit */}
             <button
               type="submit"
+              disabled={isLoading}
               className="mt-2 w-full py-3.5 rounded-xl text-sm font-bold text-white shadow-lg active:scale-95 transition-all hover:shadow-xl hover:-translate-y-0.5"
               style={{
                 background: "linear-gradient(135deg, #065f46 0%, #047857 50%, #059669 100%)",
                 fontFamily: "sans-serif",
                 boxShadow: "0 6px 20px rgba(6,95,70,0.35)",
+                opacity: isLoading ? 0.8 : 1,
+                cursor: isLoading ? "not-allowed" : "pointer",
               }}
             >
               Sign In →

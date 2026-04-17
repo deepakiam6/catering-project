@@ -36,6 +36,8 @@ interface FoodMenuProps {
   location?: string;
   session?: string;
   displayTime?: string;
+  storageKey?: string; // ✅ ADD THIS
+
 }
 
 /* ── Shared input class ─────────────────────────────────── */
@@ -49,8 +51,6 @@ const SectionHeading = ({ children }: { children: ReactNode }) => (
   </p>
 );
 
-/* ── localStorage key ───────────────────────────────────── */
-const LS_KEY = "food-menu";
 
 /* ── Default Tamil Menu Data ────────────────────────────── */
 const DEFAULT_MENU: FoodMenuCategory[] = [
@@ -196,13 +196,13 @@ const normalizeMenu = (value: unknown): FoodMenuCategory[] | null => {
   return normalized.length > 0 ? normalized : null;
 };
 
-const loadInitialMenu = (): FoodMenuCategory[] => {
+const loadInitialMenu = (key: string): FoodMenuCategory[] => {
   if (typeof window === "undefined") {
     return cloneMenu(DEFAULT_MENU);
   }
 
   try {
-    const raw = window.localStorage.getItem(LS_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return cloneMenu(DEFAULT_MENU);
 
     const parsed = JSON.parse(raw);
@@ -267,7 +267,10 @@ const FoodMenu = ({
   location = "",
   session = "",
   displayTime = "",
+  storageKey,
 }: FoodMenuProps) => {
+    // ✅ ADD THIS LINE HERE
+  const LS_KEY = storageKey || "food-menu";
   const [menuCategories, setMenuCategories] = useState<FoodMenuCategory[]>(() =>
     cloneMenu(DEFAULT_MENU)
   );
@@ -293,7 +296,7 @@ const FoodMenu = ({
 
   /* ── Load once from localStorage after mount ──────────── */
   useEffect(() => {
-    const initialMenu = loadInitialMenu();
+    const initialMenu = loadInitialMenu(LS_KEY);
     setMenuCategories(initialMenu);
     setIsHydrated(true);
   }, []);
@@ -313,7 +316,7 @@ const FoodMenu = ({
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== LS_KEY) return;
-      const latestMenu = loadInitialMenu();
+      const latestMenu = loadInitialMenu(LS_KEY);
       setMenuCategories(latestMenu);
     };
 

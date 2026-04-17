@@ -14,6 +14,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence, Variants } from "framer-motion";
+import { useBackNavigation } from "../../../hooks/useBackNavigation";
 
 /* ═══════════════════════════════════════════════════════
    TYPES
@@ -520,6 +521,7 @@ const TopVersionTimeline = ({
               <div>
                 <p className={`text-xs font-extrabold leading-tight ${isActive ? "text-red-700" : "text-gray-700"}`}>
                   {ordinal(v.version)} Save
+                  
                 </p>
               </div>
               <p className={`text-[9px] font-medium leading-tight ${isActive ? "text-red-400" : "text-gray-300"}`}>
@@ -1074,6 +1076,7 @@ type ModalState =
 const AdminFoodView = () => {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useBackNavigation({ role: "admin" });
   const [versions, setVersions] = useState<FoodVersion[]>([]);
   const [active,   setActive]   = useState<number>(0);
   const [ready,    setReady]    = useState(false);
@@ -1154,14 +1157,14 @@ const AdminFoodView = () => {
       {/* ── TOP NAV ── */}
       <div className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm shadow-red-50/60">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate(-1)}
+          <button onClick={goBack}
             className="w-8 h-8 rounded-xl flex items-center justify-center bg-gray-50 hover:bg-red-50 border border-gray-100 hover:border-red-100 text-gray-500 hover:text-red-500 transition-all flex-shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
           <div className="flex items-center gap-1.5 text-xs font-medium text-gray-400 flex-1 min-w-0">
-            <span className="hover:text-gray-600 cursor-pointer transition-colors" onClick={() => navigate(-1)}>Events</span>
+            <span className="hover:text-gray-600 cursor-pointer transition-colors" onClick={goBack}>Events</span>
             <span className="text-gray-200">›</span>
             <span className="text-red-500 font-semibold truncate">Food History</span>
           </div>

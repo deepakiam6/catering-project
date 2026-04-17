@@ -1,5 +1,7 @@
 import { useState, useEffect, ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { useLoading } from "../../context/LoadingContext";
+import { setClientAuth } from "../../utils/auth";
 
 
 interface FormState {
@@ -17,10 +19,10 @@ const UserLogin = () => {
   const [errors, setErrors] = useState<FormErrors>({ phone: "", password: "" });
   const [touched, setTouched] = useState<{ phone: boolean; password: boolean }>({ phone: false, password: false });
   const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
 
   const navigate = useNavigate();
+  const { isLoading, startLoading, stopLoading } = useLoading();
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -56,11 +58,10 @@ const UserLogin = () => {
     validatePassword(form.password) === "";
 
   const handleSubmit = () => {
-    if (!isFormValid) return;
+    if (!isFormValid || isLoading) return;
 
     setTouched({ phone: true, password: true });
-    setIsLoading(true);
-
+    startLoading("client-login");
     setTimeout(() => {
       // Read from "events" localStorage key (saved by CreateMahal)
       const events: any[] = JSON.parse(localStorage.getItem("events") || "[]");
@@ -72,13 +73,13 @@ const UserLogin = () => {
           String(e.password).trim() === String(form.password).trim()
       );
 
-      setIsLoading(false);
-
       if (matched) {
-        localStorage.setItem("currentUser", JSON.stringify(matched));
+        setClientAuth(matched);
         // ✅ KEY FIX: matched.id (not matched.eventId — events use "id", not "eventId")
-        navigate(`/book-food/${matched.id}/dashboard`);
+        stopLoading("client-login");
+        navigate(`/book-food/${matched.id}/dashboard`, { replace: true });
       } else {
+        stopLoading("client-login");
         alert("Invalid phone number or password. Please check your credentials.");
       }
     }, 1000);
