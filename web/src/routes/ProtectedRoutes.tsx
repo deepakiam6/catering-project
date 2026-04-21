@@ -1,11 +1,14 @@
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useParams } from "react-router-dom";
 import {
   getAuth,
   getClientAuth,
-  getDefaultRouteForRole,
-  type AuthSession,
+  getClientEventId,
+  getDefaultRouteForSession,
 } from "../utils/auth";
 
+/* ---------------------------------- */
+/* Protected Route Wrapper            */
+/* ---------------------------------- */
 const RoleRedirect = ({
   allow,
   redirectTo,
@@ -16,73 +19,156 @@ const RoleRedirect = ({
   children: React.ReactNode;
 }) => {
   const location = useLocation();
+  const auth = getAuth();
+  const client = getClientAuth();
+  const fallbackRoute = getDefaultRouteForSession();
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
 
   if (!allow) {
-    return <Navigate to={redirectTo} replace state={{ from: location.pathname }} />;
+    const hasSession = Boolean(auth?.role || getClientEventId(client));
+    const nextRoute =
+      hasSession && fallbackRoute !== currentPath
+        ? fallbackRoute
+        : redirectTo;
+
+    return (
+      <Navigate
+        to={nextRoute}
+        replace
+        state={{ from: currentPath }}
+      />
+    );
   }
 
   return <>{children}</>;
 };
 
+/* ---------------------------------- */
+/* Login Auto Redirect                */
+/* ---------------------------------- */
 const AuthRedirect = ({
-  fallbackRole,
   children,
 }: {
-  fallbackRole: AuthSession["role"] | "client";
   children: React.ReactNode;
 }) => {
   const auth = getAuth();
   const client = getClientAuth();
+  const redirectTo = getDefaultRouteForSession();
 
-  if (auth?.role === "admin") {
-    return <Navigate to={getDefaultRouteForRole("admin")} replace />;
-  }
-
-  if (auth?.role === "manager") {
-    return <Navigate to={getDefaultRouteForRole("manager")} replace />;
-  }
-
-  if (client && fallbackRole === "client") {
-    const eventId = String((client as { id?: string }).id ?? "").trim();
-    if (eventId) {
-      return <Navigate to={`/book-food/${eventId}/dashboard`} replace />;
-    }
+  if (auth?.role || getClientEventId(client)) {
+    return <Navigate to={redirectTo} replace />;
   }
 
   return <>{children}</>;
 };
 
-export const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+/* ---------------------------------- */
+/* Admin Protected Route              */
+/* ---------------------------------- */
+export const AdminRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const auth = getAuth();
+
   return (
-    <RoleRedirect allow={auth?.role === "admin"} redirectTo="/admin/login">
+    <RoleRedirect
+      allow={auth?.role === "admin"}
+      redirectTo="/admin/login"
+    >
       {children}
     </RoleRedirect>
   );
 };
 
-export const ManagerRoute = ({ children }: { children: React.ReactNode }) => {
+/* ---------------------------------- */
+/* Manager Protected Route            */
+/* ---------------------------------- */
+export const ManagerRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const auth = getAuth();
+
   return (
-    <RoleRedirect allow={auth?.role === "manager"} redirectTo="/admin/login">
+    <RoleRedirect
+      allow={auth?.role === "manager"}
+      redirectTo="/admin/login"
+    >
       {children}
     </RoleRedirect>
   );
 };
 
-export const ClientRoute = ({ children }: { children: React.ReactNode }) => {
+export const AdminManagerRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
+  const auth = getAuth();
+
+  return (
+    <RoleRedirect
+      allow={auth?.role === "admin" || auth?.role === "manager"}
+      redirectTo="/admin/login"
+    >
+      {children}
+    </RoleRedirect>
+  );
+};
+
+/* ---------------------------------- */
+/* Client Protected Route             */
+/* ---------------------------------- */
+export const ClientRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const client = getClientAuth();
+  const { id } = useParams<{ id: string }>();
+  const clientEventId = getClientEventId(client);
+  const isLoggedIn = Boolean(clientEventId);
+  const isRouteOwner = !id || clientEventId === String(id).trim();
+
   return (
-    <RoleRedirect allow={Boolean(client)} redirectTo="/userlogin">
+    <RoleRedirect
+      allow={Boolean(isLoggedIn && isRouteOwner)}
+      redirectTo="/userlogin"
+    >
       {children}
     </RoleRedirect>
   );
 };
 
-export const AdminLoginRoute = ({ children }: { children: React.ReactNode }) => (
-  <AuthRedirect fallbackRole="admin">{children}</AuthRedirect>
-);
+/* ---------------------------------- */
+/* Admin Login Page Route             */
+/* ---------------------------------- */
+export const AdminLoginRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
+  return (
+    <AuthRedirect>
+      {children}
+    </AuthRedirect>
+  );
+};
 
-export const ClientLoginRoute = ({ children }: { children: React.ReactNode }) => (
-  <AuthRedirect fallbackRole="client">{children}</AuthRedirect>
-);
+/* ---------------------------------- */
+/* Client Login Page Route            */
+/* ---------------------------------- */
+export const ClientLoginRoute = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
+  return (
+    <AuthRedirect>
+      {children}
+    </AuthRedirect>
+  );
+};

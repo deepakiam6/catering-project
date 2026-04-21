@@ -5,7 +5,7 @@ import { FaArrowLeft, FaPlus, FaTrash, FaPencilAlt, FaCheck, FaTimes } from "rea
 import FoodMenu from "./FoodMenu";
 import VegetableList, { Vegetable } from "./VegetableList";
 import VendorList, { Vendor } from "./VendorList";
-import { getAuth } from "../../../utils/auth";
+import { getDefaultRouteForSession } from "../../../utils/auth";
 
 /* ─── Types ─── */
 type EventType = {
@@ -642,11 +642,9 @@ const BookFood = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const locationState = useLocation();
-  const auth = getAuth();
 
   const goBack = () => {
-    if (auth?.role === "admin") navigate("/admin/dashboard");
-    else navigate("/manager/dashboard");
+    navigate(getDefaultRouteForSession(), { replace: true });
   };
 
   const editData = locationState.state?.editData;
@@ -940,7 +938,7 @@ const BookFood = () => {
       setSaveState("saved");
       // redirect after save (works for mobile + desktop)
 setTimeout(() => {
-  navigate("/admin/dashboard");
+  navigate(getDefaultRouteForSession(), { replace: true });
 }, 800);
       setTimeout(() => setSaveState("idle"), 2000);
     }, 600);

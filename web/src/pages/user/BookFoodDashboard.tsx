@@ -1,7 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useBackNavigation } from "../../hooks/useBackNavigation";
+import { clearClientAuth } from "../../utils/auth";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURE CLIENT LOGOUT UTILITY
+// Removes every key that could keep a client session alive so that:
+//   • getClientAuth() returns null immediately after logout
+//   • AuthRedirect / ClientRoute cannot bounce the user back to the dashboard
+//   • A different client starting a fresh login gets a clean slate
+// ─────────────────────────────────────────────────────────────────────────────
+const clearClientSession = (): void => {
+  clearClientAuth();
+
+  // All known localStorage keys used by the client auth system.
+  // Add any additional keys your utils/auth.ts writes here.
+  const CLIENT_STORAGE_KEYS = [
+    "clientAuth",
+    "currentUser",
+    "authSession",
+    "clientSession",
+    "userAuth",
+    "client",
+    "clientToken",
+    "eventAuth",
+  ] as const;
+
+  CLIENT_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+
+  // sessionStorage holds short-lived state; wipe it entirely so
+  // nothing survives a tab close / reopen on a shared device.
+  sessionStorage.clear();
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
 type MenuCategory = {
   id: string;
   category: string;
@@ -30,14 +64,15 @@ type BookingVersion = BookingData & {
   savedAt: string | number;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS & HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
 const LS_KEY = "bookFoodData";
 
-const formatDate = (value?: string | number) => {
+const formatDate = (value?: string | number): string => {
   if (!value) return "Unknown date";
-
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown date";
-
   return date.toLocaleString("en-IN", {
     day: "2-digit",
     month: "short",
@@ -57,7 +92,6 @@ const foodTypeMeta = (type: string) => {
       border: "rgba(220, 38, 38, 0.24)",
     };
   }
-
   if (type === "Both") {
     return {
       label: "Veg & Non-Veg",
@@ -66,7 +100,6 @@ const foodTypeMeta = (type: string) => {
       border: "rgba(217, 119, 6, 0.24)",
     };
   }
-
   return {
     label: "Vegetarian",
     accent: "#059669",
@@ -106,6 +139,9 @@ const normaliseVersions = (raw: BookingData[]): BookingVersion[] => {
   return result;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
 const BookFoodDashboard = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -115,7 +151,9 @@ const BookFoodDashboard = () => {
   const [activeVersion, setActiveVersion] = useState<number>(0);
   const [ready, setReady] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // Load booking versions from localStorage
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as BookingData[];
@@ -136,23 +174,37 @@ const BookFoodDashboard = () => {
     return () => window.clearTimeout(timer);
   }, [id]);
 
+  // Close modals on Escape key
   useEffect(() => {
-    if (!showEditModal) return undefined;
+    if (!showEditModal && !showLogoutConfirm) return undefined;
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShowEditModal(false);
+      if (event.key === "Escape") {
+        setShowEditModal(false);
+        setShowLogoutConfirm(false);
+      }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [showEditModal]);
+  }, [showEditModal, showLogoutConfirm]);
+
+  // ── SECURE LOGOUT ─────────────────────────────────────────────────────────
+  // Step 1: Wipe every client session key from localStorage + sessionStorage.
+  //         This ensures getClientAuth() returns null so route guards
+  //         (ClientRoute / AuthRedirect) cannot redirect back to the dashboard.
+  // Step 2: navigate() with replace:true removes the dashboard from the
+  //         browser history stack — pressing Back will NOT return here.
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleLogout = (): void => {
+    clearClientSession();
+    navigate("/userlogin", { replace: true });
+  };
 
   const selectedVersion = versions[activeVersion] ?? null;
 
   const stats = useMemo(() => {
-    if (!selectedVersion) {
-      return { totalItems: 0, totalCategories: 0 };
-    }
+    if (!selectedVersion) return { totalItems: 0, totalCategories: 0 };
 
     const filledCategories = selectedVersion.menu.filter((category) =>
       category.items?.some((item) => item.trim())
@@ -163,10 +215,7 @@ const BookFoodDashboard = () => {
       0
     );
 
-    return {
-      totalItems,
-      totalCategories: filledCategories.length,
-    };
+    return { totalItems, totalCategories: filledCategories.length };
   }, [selectedVersion]);
 
   const handleEditVersionSelect = (clickedVersion: BookingVersion) => {
@@ -176,6 +225,7 @@ const BookFoodDashboard = () => {
     });
   };
 
+  // ── LOADING STATE ─────────────────────────────────────────────────────────
   if (!ready) {
     return (
       <div
@@ -202,16 +252,13 @@ const BookFoodDashboard = () => {
           <p style={{ margin: 0, color: "#4b5563", fontSize: 13, fontWeight: 600 }}>
             Loading food history...
           </p>
-          <style>{`
-            @keyframes spin {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
     );
   }
 
+  // ── NO DATA STATE ─────────────────────────────────────────────────────────
   if (!selectedVersion) {
     return (
       <div
@@ -262,16 +309,19 @@ const BookFoodDashboard = () => {
     );
   }
 
+  // ── DERIVED VALUES ────────────────────────────────────────────────────────
   const eventName =
     selectedVersion.event?.nameTamil ||
     selectedVersion.event?.nameEnglish ||
     "Event";
 
   const foodMeta = foodTypeMeta(selectedVersion.foodType);
+
   const visibleMenu = selectedVersion.menu.filter((category) =>
     category.items?.some((item) => item.trim())
   );
 
+  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div
       style={{
@@ -282,36 +332,28 @@ const BookFoodDashboard = () => {
       }}
     >
       <style>{`
-        .version-scroll::-webkit-scrollbar {
-          height: 6px;
-        }
+        .version-scroll::-webkit-scrollbar { height: 6px; }
         .version-scroll::-webkit-scrollbar-thumb {
           background: rgba(5, 150, 105, 0.22);
           border-radius: 999px;
         }
-        .fade-switch {
-          animation: fadeSwitch 220ms ease;
-        }
-        .edit-modal-overlay {
-          animation: modalOverlayFade 180ms ease;
-        }
-        .edit-modal-panel {
-          animation: modalPanelRise 220ms ease;
-        }
+        .fade-switch { animation: fadeSwitch 220ms ease; }
+        .edit-modal-overlay { animation: modalOverlayFade 180ms ease; }
+        .edit-modal-panel { animation: modalPanelRise 220ms ease; }
         @keyframes fadeSwitch {
           from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+          to   { opacity: 1; transform: translateY(0); }
         }
         @keyframes modalOverlayFade {
-          from { opacity: 0; }
-          to { opacity: 1; }
+          from { opacity: 0; } to { opacity: 1; }
         }
         @keyframes modalPanelRise {
           from { opacity: 0; transform: translateY(18px) scale(0.98); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
 
+      {/* ── Header ── */}
       <div
         style={{
           position: "sticky",
@@ -333,21 +375,26 @@ const BookFoodDashboard = () => {
             gap: 12,
           }}
         >
-          <button
-            onClick={goBack}
-            style={{
-              border: "1px solid rgba(15, 23, 42, 0.08)",
-              background: "#fff",
-              color: "#374151",
-              borderRadius: 12,
-              padding: "10px 14px",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Back
-          </button>
+          {/* Left: Back + Logout */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
 
+            <button
+              onClick={() => setShowLogoutConfirm(true)}
+              style={{
+                border: "1px solid rgba(220, 38, 38, 0.22)",
+                background: "#fff",
+                color: "#dc2626",
+                borderRadius: 12,
+                padding: "10px 14px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Logout
+            </button>
+          </div>
+
+          {/* Centre: title */}
           <div style={{ textAlign: "center", minWidth: 0 }}>
             <div
               style={{
@@ -375,6 +422,7 @@ const BookFoodDashboard = () => {
             </div>
           </div>
 
+          {/* Right: Edit */}
           <button
             onClick={() => setShowEditModal(true)}
             style={{
@@ -393,6 +441,8 @@ const BookFoodDashboard = () => {
       </div>
 
       <main style={{ maxWidth: 1080, margin: "0 auto", padding: "24px 20px 48px" }}>
+
+        {/* ── Hero card ── */}
         <section
           style={{
             background: "linear-gradient(135deg, #062f23 0%, #0b5d45 100%)",
@@ -483,6 +533,7 @@ const BookFoodDashboard = () => {
           </div>
         </section>
 
+        {/* ── Version selector ── */}
         <section
           style={{
             background: "#fff",
@@ -526,12 +577,7 @@ const BookFoodDashboard = () => {
 
           <div
             className="version-scroll"
-            style={{
-              display: "flex",
-              gap: 12,
-              overflowX: "auto",
-              paddingBottom: 4,
-            }}
+            style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 4 }}
           >
             {versions.map((version, index) => {
               const isActive = index === activeVersion;
@@ -552,9 +598,7 @@ const BookFoodDashboard = () => {
                       ? `1px solid ${foodMeta.border}`
                       : "1px solid rgba(15, 23, 42, 0.08)",
                     background: isActive ? foodMeta.soft : "#f9fafb",
-                    boxShadow: isActive
-                      ? "0 10px 24px rgba(5, 150, 105, 0.12)"
-                      : "none",
+                    boxShadow: isActive ? "0 10px 24px rgba(5, 150, 105, 0.12)" : "none",
                     transition: "all 0.2s ease",
                   }}
                 >
@@ -600,24 +644,11 @@ const BookFoodDashboard = () => {
                     )}
                   </div>
 
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: "#111827",
-                      marginBottom: 6,
-                    }}
-                  >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 6 }}>
                     List {version.version}
                   </div>
 
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "#6b7280",
-                      lineHeight: 1.45,
-                    }}
-                  >
+                  <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
                     {formatDate(version.savedAt)}
                   </div>
                 </button>
@@ -626,6 +657,7 @@ const BookFoodDashboard = () => {
           </div>
         </section>
 
+        {/* ── Menu preview ── */}
         <section
           key={`${selectedVersion.eventId}-${selectedVersion.version}`}
           className="fade-switch"
@@ -646,67 +678,53 @@ const BookFoodDashboard = () => {
           >
             <div
               style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 16,
-                flexWrap: "wrap",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 12px",
+                borderRadius: 999,
+                background: foodMeta.soft,
+                color: foodMeta.accent,
+                border: `1px solid ${foodMeta.border}`,
+                fontSize: 12,
+                fontWeight: 800,
+                marginBottom: 12,
               }}
             >
-              <div>
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 12px",
-                    borderRadius: 999,
-                    background: foodMeta.soft,
-                    color: foodMeta.accent,
-                    border: `1px solid ${foodMeta.border}`,
-                    fontSize: 12,
-                    fontWeight: 800,
-                    marginBottom: 12,
-                  }}
-                >
-                  Viewing List {selectedVersion.version}
-                  {activeVersion === 0 && <span>• Latest</span>}
-                </div>
-
-                <h2
-                  style={{
-                    margin: "0 0 8px",
-                    fontSize: 28,
-                    lineHeight: 1.1,
-                    letterSpacing: "-0.03em",
-                  }}
-                >
-                  {eventName}
-                </h2>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 10,
-                    color: "#4b5563",
-                    fontSize: 14,
-                  }}
-                >
-                  <span>Session: {selectedVersion.session || "-"}</span>
-                  <span>Time: {selectedVersion.time || "-"}</span>
-                  <span>Food Type: {selectedVersion.foodType || "-"}</span>
-                </div>
-
-                {selectedVersion.location && (
-                  <div style={{ marginTop: 10, fontSize: 14, color: "#6b7280" }}>
-                    Location: {selectedVersion.location}
-                  </div>
-                )}
-              </div>
-
-              
+              Viewing List {selectedVersion.version}
+              {activeVersion === 0 && <span>• Latest</span>}
             </div>
+
+            <h2
+              style={{
+                margin: "0 0 8px",
+                fontSize: 28,
+                lineHeight: 1.1,
+                letterSpacing: "-0.03em",
+              }}
+            >
+              {eventName}
+            </h2>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                color: "#4b5563",
+                fontSize: 14,
+              }}
+            >
+              <span>Session: {selectedVersion.session || "-"}</span>
+              <span>Time: {selectedVersion.time || "-"}</span>
+              <span>Food Type: {selectedVersion.foodType || "-"}</span>
+            </div>
+
+            {selectedVersion.location && (
+              <div style={{ marginTop: 10, fontSize: 14, color: "#6b7280" }}>
+                Location: {selectedVersion.location}
+              </div>
+            )}
           </div>
 
           <div style={{ padding: 24 }}>
@@ -802,21 +820,19 @@ const BookFoodDashboard = () => {
                           gap: 10,
                         }}
                       >
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: 15,
-                              fontWeight: 800,
-                              color: "#111827",
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            {category.category}
-                          </div>
+                        <div
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 800,
+                            color: "#111827",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            minWidth: 0,
+                          }}
+                        >
+                          {category.category}
                         </div>
-
                         <span
                           style={{
                             flexShrink: 0,
@@ -879,6 +895,7 @@ const BookFoodDashboard = () => {
         </section>
       </main>
 
+      {/* ── Edit modal ── */}
       {showEditModal && (
         <div
           className="edit-modal-overlay"
@@ -918,14 +935,11 @@ const BookFoodDashboard = () => {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: 22, color: "#111827" }}>
-                  Select List to Edit
-                </h2>
+                <h2 style={{ margin: 0, fontSize: 22, color: "#111827" }}>Select List to Edit</h2>
                 <p style={{ margin: "6px 0 0", fontSize: 13, color: "#6b7280" }}>
                   Choose a saved List to open in the edit screen.
                 </p>
               </div>
-
               <button
                 onClick={() => setShowEditModal(false)}
                 aria-label="Close version picker"
@@ -941,7 +955,7 @@ const BookFoodDashboard = () => {
                   cursor: "pointer",
                 }}
               >
-                X
+                ×
               </button>
             </div>
 
@@ -988,14 +1002,7 @@ const BookFoodDashboard = () => {
                         flexWrap: "wrap",
                       }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          minWidth: 0,
-                        }}
-                      >
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                         <span
                           style={{
                             minWidth: 48,
@@ -1012,11 +1019,10 @@ const BookFoodDashboard = () => {
                           {version.version}
                         </span>
                         <span style={{ fontSize: 16, fontWeight: 700, color: "#111827" }}>
-                          {version.version}
+                          List {version.version}
                           {isLatest ? " (Latest)" : ""}
                         </span>
                       </div>
-
                       <span
                         style={{
                           fontSize: 12,
@@ -1044,6 +1050,95 @@ const BookFoodDashboard = () => {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Logout confirmation modal ── */}
+      {showLogoutConfirm && (
+        <div
+          className="edit-modal-overlay"
+          onClick={() => setShowLogoutConfirm(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 110,
+            background: "rgba(15, 23, 42, 0.6)",
+            display: "grid",
+            placeItems: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            className="edit-modal-panel"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 400,
+              borderRadius: 24,
+              background: "#ffffff",
+              boxShadow: "0 28px 80px rgba(15, 23, 42, 0.28)",
+              border: "1px solid rgba(255,255,255,0.35)",
+              padding: 28,
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: "50%",
+                background: "rgba(220, 38, 38, 0.08)",
+                border: "1px solid rgba(220, 38, 38, 0.18)",
+                display: "grid",
+                placeItems: "center",
+                margin: "0 auto 18px",
+                fontSize: 22,
+              }}
+            >
+              🚪
+            </div>
+
+            <h2 style={{ margin: "0 0 8px", fontSize: 22, color: "#111827" }}>Confirm Logout</h2>
+            <p style={{ margin: "0 0 24px", fontSize: 14, color: "#6b7280", lineHeight: 1.5 }}>
+              Are you sure you want to logout?
+            </p>
+
+            <div style={{ display: "flex", gap: 12 }}>
+              <button
+                onClick={() => setShowLogoutConfirm(false)}
+                style={{
+                  flex: 1,
+                  border: "1px solid rgba(15, 23, 42, 0.12)",
+                  background: "#f9fafb",
+                  color: "#374151",
+                  borderRadius: 14,
+                  padding: "12px 18px",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleLogout}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  background: "#dc2626",
+                  color: "#fff",
+                  borderRadius: 14,
+                  padding: "12px 18px",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: "pointer",
+                }}
+              >
+                Yes, Logout
+              </button>
             </div>
           </div>
         </div>

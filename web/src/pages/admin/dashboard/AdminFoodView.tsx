@@ -15,6 +15,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence, Variants } from "framer-motion";
 import { useBackNavigation } from "../../../hooks/useBackNavigation";
+import { getAuth } from "../../../utils/auth";
 
 /* ═══════════════════════════════════════════════════════
    TYPES
@@ -1076,7 +1077,8 @@ type ModalState =
 const AdminFoodView = () => {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const goBack = useBackNavigation({ role: "admin" });
+  const auth = getAuth();
+  const goBack = useBackNavigation({ role: auth?.role ?? "admin" });
   const [versions, setVersions] = useState<FoodVersion[]>([]);
   const [active,   setActive]   = useState<number>(0);
   const [ready,    setReady]    = useState(false);

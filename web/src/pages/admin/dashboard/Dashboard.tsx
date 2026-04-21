@@ -872,6 +872,18 @@ const ApprovalReviewModal = ({
 /* ── Main Dashboard ─────────────────────────────────────── */
 const Dashboard = () => {
   const navigate = useNavigate();
+  useEffect(() => {
+  const handleBack = () => {
+    navigate("/", { replace: true });
+  };
+
+  window.history.pushState(null, "", window.location.href);
+  window.addEventListener("popstate", handleBack);
+
+  return () => {
+    window.removeEventListener("popstate", handleBack);
+  };
+}, [navigate]);
   const auth = getAuth();
   const isAdmin = auth?.role === "admin";
 

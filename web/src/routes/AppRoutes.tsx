@@ -13,6 +13,7 @@ import Home from "../pages/user/Home";
 import UserEditFood from "../pages/user/UserEditFood";
 import UserLogin from "../pages/user/UserLogin";
 import {
+  AdminManagerRoute,
   AdminLoginRoute,
   AdminRoute,
   ClientLoginRoute,
@@ -53,9 +54,9 @@ export const AppRoutes = () => {
       <Route
         path="/admin/food-view/:id"
         element={
-          <AdminRoute>
+          <AdminManagerRoute>
             <AdminFoodView />
-          </AdminRoute>
+          </AdminManagerRoute>
         }
       />
       <Route
@@ -100,7 +101,14 @@ export const AppRoutes = () => {
         }
       />
 
-      <Route path="/book-food/:id" element={<BookFood />} />
+      <Route
+        path="/book-food/:id"
+        element={
+          <AdminManagerRoute>
+            <BookFood />
+          </AdminManagerRoute>
+        }
+      />
       <Route
         path="/book-food/:id/dashboard"
         element={

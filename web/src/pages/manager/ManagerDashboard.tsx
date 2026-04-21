@@ -52,7 +52,6 @@ const LocationIcon = () => (
   </svg>
 );
 
-
 const EyeOpenIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
     fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -110,10 +109,12 @@ const EventCard = ({
   event,
   onViewMenu,
   onBook,
+  onAssignVendor,
 }: {
   event: EventType;
   onViewMenu: () => void;
   onBook: () => void;
+  onAssignVendor: () => void;
 }) => {
   const fromDay = new Date(event.fromDate).getDate();
   const fromMonth = event.fromDate.split("-")[1];
@@ -149,7 +150,6 @@ const EventCard = ({
           <p className="text-gray-500 text-[10px] font-semibold leading-snug mt-0.5">{monthLabel}</p>
           <p className="text-gray-400 text-[9px] font-medium">{year}</p>
         </div>
-
       </div>
 
       {/* ── Card Body ── */}
@@ -184,8 +184,41 @@ const EventCard = ({
         </div>
 
         {/* CTA */}
-        <div className="mt-4 w-full bg-emerald-50 group-hover:bg-emerald-600 border border-emerald-200 group-hover:border-emerald-600 text-emerald-700 group-hover:text-white text-xs font-bold py-2.5 rounded-xl text-center transition-all duration-300 select-none">
-          Book Food →
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            {/* ── View Menu ── */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewMenu();
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all"
+            >
+              View Menu
+            </button>
+
+            {/* ── Assign Vendor ── FIX: stopPropagation + dedicated callback ── */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAssignVendor();
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all"
+            >
+              Assign Vendor
+            </button>
+          </div>
+
+          {/* ── Book Food ── */}
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              onBook();
+            }}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-3 rounded-xl text-center transition-all"
+          >
+            Book Food →
+          </div>
         </div>
       </div>
     </div>
@@ -242,9 +275,7 @@ const ManagerDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 pb-20 sm:pb-8">
 
-      {/* ────────────────────────────────────────────
-          STICKY HEADER
-      ──────────────────────────────────────────── */}
+      {/* ── STICKY HEADER ── */}
       <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
 
@@ -278,9 +309,7 @@ const ManagerDashboard = () => {
         </div>
       </header>
 
-      {/* ────────────────────────────────────────────
-          HERO BANNER
-      ──────────────────────────────────────────── */}
+      {/* ── HERO BANNER ── */}
       <div className="bg-gradient-to-r from-emerald-600 via-green-600 to-teal-500 text-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-8">
           <p className="text-emerald-200 text-[11px] font-bold uppercase tracking-widest mb-1">
@@ -302,9 +331,7 @@ const ManagerDashboard = () => {
         </div>
       </div>
 
-      {/* ────────────────────────────────────────────
-          DATE STRIP
-      ──────────────────────────────────────────── */}
+      {/* ── DATE STRIP ── */}
       <div className="bg-white border-b border-gray-100 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div
@@ -355,9 +382,7 @@ const ManagerDashboard = () => {
         </div>
       </div>
 
-      {/* ────────────────────────────────────────────
-          MAIN CONTENT
-      ──────────────────────────────────────────── */}
+      {/* ── MAIN CONTENT ── */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6">
 
         {/* Section header */}
@@ -380,6 +405,7 @@ const ManagerDashboard = () => {
                 event={event}
                 onViewMenu={() => navigate(`/admin/food-view/${event.id}`)}
                 onBook={() => navigate(`/book-food/${event.id}`)}
+                onAssignVendor={() => navigate("/event-sheets")}
               />
             ))}
           </div>
@@ -407,9 +433,7 @@ const ManagerDashboard = () => {
         )}
       </main>
 
-      {/* ────────────────────────────────────────────
-          MOBILE BOTTOM BAR
-      ──────────────────────────────────────────── */}
+      {/* ── MOBILE BOTTOM BAR ── */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-3 flex items-center justify-between z-20 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">

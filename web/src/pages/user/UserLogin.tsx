@@ -1,7 +1,7 @@
 import { useState, useEffect, ChangeEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useLoading } from "../../context/LoadingContext";
-import { setClientAuth } from "../../utils/auth";
+import { clearAuth, setClientAuth } from "../../utils/auth";
 
 
 interface FormState {
@@ -22,9 +22,24 @@ const UserLogin = () => {
   const [mounted, setMounted] = useState<boolean>(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { isLoading, startLoading, stopLoading } = useLoading();
+  const requestedPath = typeof location.state?.from === "string" ? location.state.from : "";
 
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    const handleBackNavigation = () => {
+      navigate("/", { replace: true });
+    };
+
+    window.history.pushState({ page: "userlogin" }, "", window.location.href);
+    window.addEventListener("popstate", handleBackNavigation);
+
+    return () => {
+      window.removeEventListener("popstate", handleBackNavigation);
+    };
+  }, [navigate]);
 
   const validatePhone = (value: string): string => {
     if (!value) return "Phone number is required.";
@@ -74,10 +89,16 @@ const UserLogin = () => {
       );
 
       if (matched) {
+        clearAuth();
         setClientAuth(matched);
         // ✅ KEY FIX: matched.id (not matched.eventId — events use "id", not "eventId")
+        const eventId = String(matched.id).trim();
+        const defaultRoute = `/book-food/${eventId}/dashboard`;
+        const canResumeRequestedRoute =
+          requestedPath === defaultRoute ||
+          requestedPath === `/user-edit-food/${eventId}`;
         stopLoading("client-login");
-        navigate(`/book-food/${matched.id}/dashboard`, { replace: true });
+        navigate(canResumeRequestedRoute ? requestedPath : defaultRoute, { replace: true });
       } else {
         stopLoading("client-login");
         alert("Invalid phone number or password. Please check your credentials.");

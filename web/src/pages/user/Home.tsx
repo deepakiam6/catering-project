@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 // @ts-ignore
 import cateringVideo from "../../assets/catering.mp4";
 import Footer from "../../components/Footer";
+import { clearAuth, clearClientAuth } from "../../utils/auth";
 
 /* Scroll-reveal hook */
 function useScrollReveal() {
@@ -74,6 +75,18 @@ const Home = () => {
   const [sidebarFullyOpen, setSidebarFullyOpen] = useState(false);
 
   useScrollReveal();
+
+  const openAdminLogin = () => {
+    clearAuth();
+    clearClientAuth();
+    navigate("/admin/login", { replace: true });
+  };
+
+  const openClientLogin = () => {
+    clearAuth();
+    clearClientAuth();
+    navigate("/userlogin", { replace: true });
+  };
 
   useEffect(() => {
     if (!document.getElementById("mrs-catering-fonts")) {
@@ -586,7 +599,7 @@ const Home = () => {
           {/* Admin */}
           <button
             className="sidebar-nav-item admin-item"
-            onClick={() => { closeMenu(); navigate("/admin/login"); }}
+            onClick={() => { closeMenu(); openAdminLogin(); }}
           >
             <span className="sidebar-nav-item-icon">⚙️</span>
             <div>
@@ -598,7 +611,10 @@ const Home = () => {
           {/* Client */}
           <button
             className="sidebar-nav-item client-item"
-            onClick={() => { closeMenu(); navigate("/userlogin"); }}
+            onClick={() => {
+              closeMenu();
+              openClientLogin();
+            }}
           >
             <span className="sidebar-nav-item-icon">👤</span>
             <div>
@@ -735,14 +751,14 @@ const Home = () => {
 
             <div className="header-actions hidden md:flex">
               <button
-                onClick={() => navigate("/admin/login")}
+                onClick={openAdminLogin}
                 className="btn-admin btn-common"
               >
                 Admin
               </button>
 
               <button
-                onClick={() => navigate("/userlogin")}
+                onClick={openClientLogin}
                 className="btn-client btn-common"
               >
                 Client

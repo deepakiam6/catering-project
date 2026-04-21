@@ -52,7 +52,7 @@ const DEFAULT_ROLES = [
   "300 ml (Water Bottles/Drinks)",
   "பாத்திரம் (சுத்தம்)",
   "Idly / Puttu / Idiyappam",
-  "Seivai",
+  "Sevai",
   "PSR",
   "Kavin",
   "Ice Cream / Beeda",

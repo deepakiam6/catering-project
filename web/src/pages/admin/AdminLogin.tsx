@@ -1,18 +1,60 @@
-import { useState, FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState,useEffect, FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useLoading } from "../../context/LoadingContext";
-import { setAuth } from "../../utils/auth";
+import { clearClientAuth, setAuth } from "../../utils/auth";
 
 
 const AdminLogin = () => {
   const [touchStartX, setTouchStartX] = useState(0);
   const [touchEndX, setTouchEndX] = useState(0);
   const navigate = useNavigate();
+  const location = useLocation();
   const { isLoading } = useLoading();
+
+    useEffect(() => {
+    const handleBackButton = () => {
+      navigate("/", { replace: true });
+    };
+
+    window.history.pushState(null, "", window.location.href);
+
+    window.addEventListener("popstate", handleBackButton);
+
+    return () => {
+      window.removeEventListener("popstate", handleBackButton);
+    };
+  }, [navigate]);
 
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [error,    setError]    = useState("");
+  const requestedPath = typeof location.state?.from === "string" ? location.state.from : "";
+
+  const getRedirectPath = (role: "admin" | "manager") => {
+    if (role === "admin") {
+      if (
+        requestedPath.startsWith("/admin/") ||
+        requestedPath.startsWith("/assign-vendor/") ||
+        requestedPath === "/event-sheets" ||
+        requestedPath.startsWith("/create-mahal") ||
+        requestedPath.startsWith("/book-food/")
+      ) {
+        return requestedPath;
+      }
+
+      return "/admin/dashboard";
+    }
+
+    if (
+      requestedPath === "/manager/dashboard" ||
+      requestedPath.startsWith("/book-food/") ||
+      requestedPath.startsWith("/admin/food-view/")
+    ) {
+      return requestedPath;
+    }
+
+    return "/manager/dashboard";
+  };
   const handleTouchStart = (e: React.TouchEvent) => {
   setTouchStartX(e.changedTouches[0].screenX);
 };
@@ -64,8 +106,9 @@ const handleMouseUp = (e: React.MouseEvent) => {
   // 🔐 ADMIN LOGIN (ADD THIS BACK)
   if (email.trim() === "admin" && password === "admin123") {
     setError("");
+    clearClientAuth();
     setAuth({ role: "admin" });
-    navigate("/admin/dashboard", { replace: true });
+    navigate(getRedirectPath("admin"), { replace: true });
     return;
   }
 
@@ -80,8 +123,9 @@ const handleMouseUp = (e: React.MouseEvent) => {
 
     if (match) {
       setError("");
+      clearClientAuth();
       setAuth({ role: "manager", phone: match.phone });
-      navigate("/manager/dashboard", { replace: true });
+      navigate(getRedirectPath("manager"), { replace: true });
       return;
     }
   } catch {}
