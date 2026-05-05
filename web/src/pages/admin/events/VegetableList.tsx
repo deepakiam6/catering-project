@@ -27,16 +27,17 @@ interface VegetableListProps {
   location?: string;
   session?: string;
   displayTime?: string;
+  eventId?: string;
 }
 
 /* ── localStorage keys ───────────────────────────────────── */
-const STORAGE_KEY = "vegetables";
-const HEADINGS_STORAGE_KEY = "vegetable_headings";
+export const getVegetablesStorageKey = (eventId?: string) => eventId ? `vegetables-${eventId}` : "vegetables";
+export const getVegetableHeadingsStorageKey = (eventId?: string) => eventId ? `vegetable_headings-${eventId}` : "vegetable_headings";
 
 /* ── localStorage helpers ────────────────────────────────── */
-export function loadVegetables(): Vegetable[] {
+export function loadVegetables(eventId?: string): Vegetable[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getVegetablesStorageKey(eventId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -46,15 +47,15 @@ export function loadVegetables(): Vegetable[] {
   }
 }
 
-export function saveVegetablesToStorage(data: Vegetable[]): void {
+export function saveVegetablesToStorage(data: Vegetable[], eventId?: string): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(getVegetablesStorageKey(eventId), JSON.stringify(data));
   } catch {}
 }
 
-function saveHeadingsToStorage(data: VegetableHeading[]): void {
+function saveHeadingsToStorage(data: VegetableHeading[], eventId?: string): void {
   try {
-    localStorage.setItem(HEADINGS_STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(getVegetableHeadingsStorageKey(eventId), JSON.stringify(data));
   } catch {}
 }
 
@@ -193,6 +194,7 @@ const VegetableList = ({
   location = "",
   session = "",
   displayTime = "",
+  eventId,
 }: VegetableListProps) => {
 
   const [editState, setEditState] = useState<EditState>(null);
@@ -209,8 +211,8 @@ const VegetableList = ({
 
   /* ── On mount: load from localStorage or set defaults ── */
   useEffect(() => {
-    const storedVegs = localStorage.getItem(STORAGE_KEY);
-    const storedHeadings = localStorage.getItem(HEADINGS_STORAGE_KEY);
+    const storedVegs = localStorage.getItem(getVegetablesStorageKey(eventId));
+    const storedHeadings = localStorage.getItem(getVegetableHeadingsStorageKey(eventId));
 
     let parsed: Vegetable[] = [];
 
@@ -227,9 +229,9 @@ const isEmpty = parsed.length === 0;
       setHeadings([]);
     } else {
       try {
-        const parsed = JSON.parse(storedVegs);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setVegetables(parsed);
+        const parsed2 = JSON.parse(storedVegs || "[]");
+        if (Array.isArray(parsed2) && parsed2.length > 0) {
+          setVegetables(parsed2);
         }
       } catch {}
 
@@ -241,17 +243,17 @@ const isEmpty = parsed.length === 0;
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eventId]);
 
   /* ── Persist vegetables ─────────────────────────────── */
   useEffect(() => {
-    saveVegetablesToStorage(vegetables);
-  }, [vegetables]);
+    saveVegetablesToStorage(vegetables, eventId);
+  }, [vegetables, eventId]);
 
   /* ── Persist headings ───────────────────────────────── */
   useEffect(() => {
-    saveHeadingsToStorage(headings);
-  }, [headings]);
+    saveHeadingsToStorage(headings, eventId);
+  }, [headings, eventId]);
 
   /* ── Detect mobile ──────────────────────────────────── */
   useEffect(() => {

@@ -46,6 +46,7 @@ export const readSheets = (): EventSheet[] => {
 };
 
 const saveSheets = (sheets: EventSheet[]) => {
+  console.log("Saving:", sheets); // 👈 ADD THIS
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sheets));
 };
 

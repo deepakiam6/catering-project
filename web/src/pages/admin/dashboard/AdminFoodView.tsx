@@ -1,14 +1,19 @@
 /**
  * AdminFoodView.tsx
- * Version timeline shown prominently at the TOP of the page (full-width),
- * detail content below. Works on both mobile and desktop.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ARCHITECTURE (revised):
  *
- * FIX: Vendor data normalised at load-time — both shapes work:
- *   Shape A (VendorList save): { role, phone, assignedVendor }
- *   Shape B (AdminFoodView):   { name, phone }
+ *  bookFoodData           → version timeline only (saves history)
+ *  food-menu-{id}-{sess}  → per-session: menu, timeSlots, foodType, members
+ *  vegetables             → global ingredient list (shared across sessions)
+ *  vegetable_headings     → global headings
+ *  vendors_v2             → global vendor/contact list (shared across sessions)
  *
- * UPDATE: Vendor card now shows Role → Vendor Name → Phone
- * UPDATE: handlePrintAll moved inside FoodDetailBody (has access to v, filledMenu, filledVeg, filledVend)
+ * The version timeline still shows all saves from bookFoodData.
+ * When a version card is selected, its session key is used to load the
+ * live session data from food-menu-{eventId}-{session}.
+ * Vegetables and vendors always come from the global LS keys.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { useParams, useNavigate } from "react-router-dom";
@@ -23,21 +28,17 @@ import { getAuth } from "../../../utils/auth";
 type MenuCategory = { id: string; category: string; items: string[] };
 type Vegetable    = { name: string; qty: string; unit: string };
 
-/** Shape that AdminFoodView renders — now includes optional role */
 type Vendor = {
   name : string;
   phone: string;
   role?: string;
 };
 
-/**
- * Raw shape that may come from VendorList (before BookFood transforms it).
- * We handle BOTH so old saves and new saves all work correctly.
- */
 type RawVendor =
-  | { name: string; phone: string; role?: string }           // already transformed
-  | { role: string; phone: string; assignedVendor: string }; // raw VendorList shape
+  | { name: string; phone: string; role?: string }
+  | { role: string; phone: string; assignedVendor: string; payment?: string; advance?: string; balance?: string; paidStatus?: string; paidBy?: string; paidDate?: string };
 
+/** Shape stored in bookFoodData – used only for version timeline */
 export type FoodBookingPayload = {
   eventId   : string;
   event?    : { nameTamil?: string; nameEnglish?: string };
@@ -52,27 +53,35 @@ export type FoodBookingPayload = {
   savedAt?  : string | number;
 };
 
-type FoodVersion = Omit<FoodBookingPayload, "vendors"> & {
-  version: number;
-  savedAt: string | number;
-  vendors: Vendor[];          // always normalised
+/** Shape of food-menu-{eventId}-{session} */
+type SessionMenuData = {
+  menu      : MenuCategory[];
+  timeSlots : { id: string; value: string }[];
+  foodType  : string;
+  members   : number;
+};
+
+/** Normalised version entry (timeline only) */
+type FoodVersion = {
+  eventId  : string;
+  event?   : { nameTamil?: string; nameEnglish?: string };
+  location?: string;
+  session  : string;
+  time     : string;
+  foodType : string;
+  version  : number;
+  savedAt  : string | number;
 };
 
 const LS_KEY = "bookFoodData";
 
 /* ═══════════════════════════════════════════════════════
    VENDOR NORMALISER
-   Converts either raw shape → { name, phone, role }
 ═══════════════════════════════════════════════════════ */
 const normaliseVendor = (v: RawVendor): Vendor => {
   if ("name" in v) {
-    return {
-      name : v.name  ?? "",
-      phone: v.phone ?? "",
-      role : v.role  ?? "",
-    };
+    return { name: v.name ?? "", phone: v.phone ?? "", role: v.role ?? "" };
   }
-  // Raw VendorList shape: prefer assignedVendor for name, keep role separately
   return {
     name : v.assignedVendor?.trim() || v.role?.trim() || "",
     phone: v.phone ?? "",
@@ -81,7 +90,7 @@ const normaliseVendor = (v: RawVendor): Vendor => {
 };
 
 /* ═══════════════════════════════════════════════════════
-   SAVE HELPER
+   SAVE HELPER  (exported – used by BookFood page)
 ═══════════════════════════════════════════════════════ */
 export const saveBookingVersion = (payload: FoodBookingPayload): FoodVersion => {
   let all: FoodBookingPayload[] = [];
@@ -102,11 +111,7 @@ export const saveBookingVersion = (payload: FoodBookingPayload): FoodVersion => 
 
   all.push(newEntry);
   localStorage.setItem(LS_KEY, JSON.stringify(all));
-
-  return {
-    ...newEntry,
-    vendors: (newEntry.vendors ?? []).map(normaliseVendor),
-  } as FoodVersion;
+  return newEntry as FoodVersion;
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -115,8 +120,8 @@ export const saveBookingVersion = (payload: FoodBookingPayload): FoodVersion => 
 export const deleteSingleVersion = (
   eventId    : string,
   version    : number,
-  allVersions: FoodVersion[],
-  setVersions: React.Dispatch<React.SetStateAction<FoodVersion[]>>,
+  allVersions: FoodBookingPayload[],
+  setVersions: React.Dispatch<React.SetStateAction<FoodBookingPayload[]>>,
   activeIndex: number,
   setActive  : React.Dispatch<React.SetStateAction<number>>,
 ): void => {
@@ -133,17 +138,13 @@ export const deleteSingleVersion = (
 
   const newVersions = allVersions.filter((d) => d.version !== version);
   setVersions(newVersions);
-
-  if (newVersions.length === 0) {
-    setActive(0);
-  } else if (activeIndex >= newVersions.length) {
-    setActive(newVersions.length - 1);
-  }
+  if (newVersions.length === 0) setActive(0);
+  else if (activeIndex >= newVersions.length) setActive(newVersions.length - 1);
 };
 
 export const deleteAllVersions = (
   eventId    : string,
-  setVersions: React.Dispatch<React.SetStateAction<FoodVersion[]>>,
+  setVersions: React.Dispatch<React.SetStateAction<FoodBookingPayload[]>>,
 ): void => {
   let stored: FoodBookingPayload[] = [];
   try {
@@ -151,38 +152,65 @@ export const deleteAllVersions = (
     if (!Array.isArray(stored)) stored = [];
   } catch { stored = []; }
 
-  const updated = stored.filter((d) => d.eventId !== eventId);
-  localStorage.setItem(LS_KEY, JSON.stringify(updated));
+  localStorage.setItem(LS_KEY, JSON.stringify(stored.filter((d) => d.eventId !== eventId)));
   setVersions([]);
 };
 
 /* ═══════════════════════════════════════════════════════
-   NORMALISE ALL VERSIONS
+   LS READERS
 ═══════════════════════════════════════════════════════ */
-const normaliseVersions = (raw: FoodBookingPayload[]): FoodVersion[] => {
-  const groups: Record<string, FoodBookingPayload[]> = {};
-  raw.forEach((d) => {
-    if (!groups[d.eventId]) groups[d.eventId] = [];
-    groups[d.eventId].push(d);
-  });
 
-  const result: FoodVersion[] = [];
-  Object.values(groups).forEach((group) => {
-    group.sort((a, b) => {
-      const ta = a.savedAt ? new Date(a.savedAt).getTime() : 0;
-      const tb = b.savedAt ? new Date(b.savedAt).getTime() : 0;
-      return ta - tb;
-    });
-    group.forEach((entry, i) => {
-      result.push({
-        ...entry,
-        version: entry.version && entry.version > 0 ? entry.version : i + 1,
-        savedAt: entry.savedAt ?? new Date().toISOString(),
-        vendors: (entry.vendors ?? []).map(normaliseVendor),
+/** Read food-menu-{eventId}-{session} */
+const readSessionMenu = (eventId: string, session: string): SessionMenuData | null => {
+  try {
+    const raw = localStorage.getItem(`food-menu-${eventId}-${session}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as SessionMenuData;
+  } catch { return null; }
+};
+
+/** Read global vegetables[] */
+const readVegetables = (eventId: string): Vegetable[] => {
+  try {
+    const raw = localStorage.getItem(`vegetables-${eventId}`);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+};
+
+/** Read global vendors_v2[] and normalise */
+const readVendors = (eventId: string): Vendor[] => {
+  try {
+    const raw = localStorage.getItem(`vendors_v2-${eventId}`);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as RawVendor[];
+    return Array.isArray(arr) ? arr.map(normaliseVendor) : [];
+  } catch { return []; }
+};
+
+/** Build timeline versions from bookFoodData */
+const buildVersionTimeline = (eventId: string): FoodBookingPayload[] => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as FoodBookingPayload[];
+    if (!Array.isArray(raw)) return [];
+
+    const filtered = raw
+      .filter((d) => String(d.eventId).trim() === String(eventId).trim())
+      .map((d, i) => {
+        // Assign version: use stored value if valid, else order-based
+        const ver = d.version && d.version > 0 ? d.version : i + 1;
+        return {
+          ...d,
+          version: ver,
+          savedAt: d.savedAt ?? new Date().toISOString(),
+        } as FoodBookingPayload;
       });
-    });
-  });
-  return result;
+
+    // Sort: newest first
+    filtered.sort((a, b) => (b.version ?? 0) - (a.version ?? 0));
+    return filtered;
+  } catch { return []; }
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -223,6 +251,7 @@ const SESSION: Record<string, { icon: string; color: string }> = {
   Evening  : { icon:"🌆", color:"text-purple-600" },
   Night    : { icon:"🌙", color:"text-indigo-600" },
 };
+const ALL_SESSIONS = ["Morning", "Afternoon", "Evening", "Night"] as const;
 
 /* ═══════════════════════════════════════════════════════
    HELPERS
@@ -262,6 +291,49 @@ const Empty = ({ msg }: { msg: string }) => (
   <div className="flex flex-col items-center gap-2 py-10">
     <span className="text-2xl opacity-20">—</span>
     <p className="text-xs text-gray-400">{msg}</p>
+  </div>
+);
+
+/* ═══════════════════════════════════════════════════════
+   SESSION SWITCHER (replaces timeline's food-type badge)
+   Shows 4 session tabs; active session drives the detail view
+═══════════════════════════════════════════════════════ */
+const SessionSwitcher = ({
+  active,
+  onSelect,
+  availableSessions,
+}: {
+  eventId          : string;
+  active           : string;
+  onSelect         : (s: string) => void;
+  availableSessions: string[];
+}) => (
+  <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+    {ALL_SESSIONS.map((sess) => {
+      const cfg       = SESSION[sess] ?? { icon: "🗓", color: "text-gray-600" };
+      const isActive  = active === sess;
+      const hasData   = availableSessions.includes(sess);
+      return (
+        <motion.button
+          key={sess}
+          whileTap={{ scale: 0.94 }}
+          onClick={() => onSelect(sess)}
+          className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-200 ${
+            isActive
+              ? "border-red-400 bg-red-50 text-red-700 shadow-sm shadow-red-100"
+              : hasData
+              ? "border-gray-200 bg-white text-gray-600 hover:border-red-200 hover:bg-red-50/40"
+              : "border-gray-100 bg-gray-50/50 text-gray-300 cursor-default"
+          }`}
+        >
+          <span>{cfg.icon}</span>
+          <span>{sess}</span>
+          {hasData && !isActive && (
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+          )}
+        </motion.button>
+      );
+    })}
   </div>
 );
 
@@ -328,7 +400,7 @@ const DeleteConfirmModal = ({ mode, version, eventId, onConfirm, onCancel }: Del
                     ? "bg-gradient-to-r from-orange-500 to-red-500 shadow-orange-200 hover:shadow-orange-300"
                     : "bg-gradient-to-r from-red-600 to-rose-500 shadow-red-200 hover:shadow-red-300"
                 }`}>
-                {isSingle ? "Delete List" : "Delete All List"}
+                {isSingle ? "Delete Save" : "Delete All"}
               </button>
             </div>
           </div>
@@ -339,7 +411,7 @@ const DeleteConfirmModal = ({ mode, version, eventId, onConfirm, onCancel }: Del
 };
 
 /* ═══════════════════════════════════════════════════════
-   DELETE + EDIT + PRINT ACTION BUTTONS
+   ACTION BUTTONS (fixed floating)
 ═══════════════════════════════════════════════════════ */
 const DeleteActions = ({
   onDeleteSingle,
@@ -353,43 +425,18 @@ const DeleteActions = ({
   onPrint       : () => void;
 }) => (
   <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-3 items-end">
-
-    {/* PRINT — above Edit */}
-    <motion.button
-      whileTap={{ scale: 0.9 }}
-      onClick={onPrint}
-      className="
-        w-12 h-12 sm:w-44 sm:h-12
-        flex items-center justify-center gap-2
-        rounded-full border-2 border-blue-100
-        bg-blue-50 text-blue-700
-        text-sm font-bold shadow-lg shadow-blue-100
-        hover:bg-blue-100 hover:border-blue-200
-        transition-all duration-200
-      "
-    >
+    <motion.button whileTap={{ scale: 0.9 }} onClick={onPrint}
+      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-blue-100 bg-blue-50 text-blue-700 text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-100 hover:border-blue-200 transition-all duration-200">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="6 9 6 2 18 2 18 9"/>
         <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
         <rect x="6" y="14" width="12" height="8"/>
       </svg>
-      <span className="hidden sm:inline">Print </span>
+      <span className="hidden sm:inline">Print</span>
     </motion.button>
 
-    {/* EDIT */}
-    <motion.button
-      whileTap={{ scale: 0.9 }}
-      onClick={onEdit}
-      className="
-        w-12 h-12 sm:w-44 sm:h-12
-        flex items-center justify-center gap-2
-        rounded-full border-2 border-green-100
-        bg-green-50 text-green-700
-        text-sm font-bold shadow-lg shadow-green-100
-        hover:bg-green-100 hover:border-green-200
-        transition-all duration-200
-      "
-    >
+    <motion.button whileTap={{ scale: 0.9 }} onClick={onEdit}
+      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-green-100 bg-green-50 text-green-700 text-sm font-bold shadow-lg shadow-green-100 hover:bg-green-100 hover:border-green-200 transition-all duration-200">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -397,20 +444,8 @@ const DeleteActions = ({
       <span className="hidden sm:inline">Edit</span>
     </motion.button>
 
-    {/* DELETE SINGLE */}
-    <motion.button
-      whileTap={{ scale: 0.9 }}
-      onClick={onDeleteSingle}
-      className="
-        w-12 h-12 sm:w-44 sm:h-12
-        flex items-center justify-center gap-2
-        rounded-full border-2 border-orange-100
-        bg-orange-50 text-orange-600
-        text-sm font-bold shadow-lg shadow-orange-100
-        hover:bg-orange-100 hover:border-orange-200
-        transition-all duration-200
-      "
-    >
+    <motion.button whileTap={{ scale: 0.9 }} onClick={onDeleteSingle}
+      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-orange-100 bg-orange-50 text-orange-600 text-sm font-bold shadow-lg shadow-orange-100 hover:bg-orange-100 hover:border-orange-200 transition-all duration-200">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -420,43 +455,27 @@ const DeleteActions = ({
       <span className="hidden sm:inline">Delete</span>
     </motion.button>
 
-    {/* DELETE ALL */}
-    <motion.button
-      whileTap={{ scale: 0.9 }}
-      onClick={onDeleteAll}
-      className="
-        w-12 h-12 sm:w-44 sm:h-12
-        flex items-center justify-center gap-2
-        rounded-full border-2 border-red-100
-        bg-red-50 text-red-600
-        text-sm font-bold shadow-lg shadow-red-100
-        hover:bg-red-100 hover:border-red-200
-        transition-all duration-200
-      "
-    >
+    <motion.button whileTap={{ scale: 0.9 }} onClick={onDeleteAll}
+      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-red-100 bg-red-50 text-red-600 text-sm font-bold shadow-lg shadow-red-100 hover:bg-red-100 hover:border-red-200 transition-all duration-200">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-        <path d="M3 6h18"/>
-        <path d="M8 6V4h8v2"/>
-        <path d="M19 6l-1 14H6L5 6"/>
-        <line x1="9" y1="10" x2="9" y2="20"/>
-        <line x1="12" y1="10" x2="12" y2="20"/>
+        <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>
+        <line x1="9" y1="10" x2="9" y2="20"/><line x1="12" y1="10" x2="12" y2="20"/>
         <line x1="15" y1="10" x2="15" y2="20"/>
       </svg>
       <span className="hidden sm:inline">Delete All</span>
     </motion.button>
-
   </div>
 );
 
 /* ═══════════════════════════════════════════════════════
-   TOP VERSION TIMELINE — FULL WIDTH, ABOVE CONTENT
+   TOP VERSION TIMELINE  (unchanged visual)
 ═══════════════════════════════════════════════════════ */
 const TopVersionTimeline = ({
   versions,
   active,
   onSelect,
 }: {
-  versions: FoodVersion[];
+  versions: FoodBookingPayload[];
   active  : number;
   onSelect: (idx: number) => void;
 }) => {
@@ -472,7 +491,6 @@ const TopVersionTimeline = ({
 
   return (
     <div className="bg-white border border-gray-100 rounded-3xl shadow-sm overflow-hidden mb-5">
-
       <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-sm flex-shrink-0">🕓</div>
@@ -485,7 +503,7 @@ const TopVersionTimeline = ({
             {versions.length} {versions.length === 1 ? "save" : "saves"}
           </span>
           <span className="text-[10px] font-bold bg-gray-50 text-gray-500 border border-gray-100 px-2.5 py-1 rounded-full">
-            Latest · List{latest.version}
+            Latest · List{latest?.version}
           </span>
         </div>
       </div>
@@ -497,7 +515,7 @@ const TopVersionTimeline = ({
       >
         {versions.map((v, idx) => {
           const isActive = active === idx;
-          const isLatest = v.version === latest.version;
+          const isLatest = v.version === latest?.version;
           return (
             <motion.button
               key={`${v.eventId}-v${v.version}-${idx}`}
@@ -521,12 +539,11 @@ const TopVersionTimeline = ({
               </div>
               <div>
                 <p className={`text-xs font-extrabold leading-tight ${isActive ? "text-red-700" : "text-gray-700"}`}>
-                  {ordinal(v.version)} Save
-                  
+                  {ordinal(v.version ?? 0)} Save
                 </p>
               </div>
               <p className={`text-[9px] font-medium leading-tight ${isActive ? "text-red-400" : "text-gray-300"}`}>
-                {fmtDate(v.savedAt)}
+                {fmtDate(v.savedAt ?? "")}
               </p>
               <div className="flex flex-wrap gap-1">
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-lg ${
@@ -534,7 +551,7 @@ const TopVersionTimeline = ({
                 }`}>{v.session}</span>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-lg ${
                   isActive ? "bg-red-100 text-red-600" : "bg-gray-50 text-gray-400 border border-gray-100"
-                }`}>{v.foodType}</span>
+                }`}>{v.foodType || "—"}</span>
               </div>
               {isActive && (
                 <motion.div layoutId="versionActiveDot" className="w-1.5 h-1.5 rounded-full bg-red-500" />
@@ -554,16 +571,16 @@ const TopVersionTimeline = ({
           <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse" />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-extrabold text-red-700">
-              Viewing: {ordinal(versions[active]?.version)} Save {versions[active]?.version}
+              Viewing: {ordinal(versions[active]?.version ?? 0)} Save {versions[active]?.version ?? 0}
             </p>
-            <p className="text-[10px] text-red-400 truncate">{fmtDate(versions[active]?.savedAt)}</p>
+            <p className="text-[10px] text-red-400 truncate">{fmtDate(versions[active]?.savedAt ?? "")}</p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
             <span className="text-[9px] font-bold text-red-500 bg-white border border-red-100 px-2 py-0.5 rounded-lg">
               {versions[active]?.session}
             </span>
             <span className="text-[9px] font-bold text-red-500 bg-white border border-red-100 px-2 py-0.5 rounded-lg">
-              {versions[active]?.foodType}
+              {versions[active]?.foodType || "—"}
             </span>
             {versions[active]?.version === versions[0]?.version && (
               <span className="text-[9px] font-extrabold uppercase tracking-wide bg-red-500 text-white px-2 py-0.5 rounded-full">Latest</span>
@@ -577,75 +594,147 @@ const TopVersionTimeline = ({
 
 /* ═══════════════════════════════════════════════════════
    FOOD DETAIL BODY
+   Now receives:
+     v            → FoodVersion (timeline meta only)
+     sessionData  → live food-menu-{id}-{sess} data
+     vegetables   → global list
+     vendors      → global list
+     activeSession, setActiveSession → session tab control
+     availableSessions → which sessions have LS data
 ═══════════════════════════════════════════════════════ */
 type FoodDetailBodyProps = {
-  v             : FoodVersion;
-  versionKey    : string;
-  onDeleteSingle: () => void;
-  onDeleteAll   : () => void;
-  onEdit        : () => void;
+  v                : FoodBookingPayload;
+  versionKey       : string;
+  sessionData      : SessionMenuData | null;
+  vegetables       : Vegetable[];
+  vendors          : Vendor[];
+  activeSession    : string;
+  setActiveSession : (s: string) => void;
+  availableSessions: string[];
+  onDeleteSingle   : () => void;
+  onDeleteAll      : () => void;
+  onEdit           : () => void;
 };
 
-const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: FoodDetailBodyProps) => {
-  const ft         = FOOD_TYPE[v.foodType] ?? FOOD_TYPE["Both"];
-  const sess       = SESSION[v.session]    ?? { icon: "🗓", color: "text-gray-600" };
-  const filledMenu = v.menu?.filter((c) => c.items?.some((i) => i.trim())) ?? [];
-  const filledVeg  = v.vegetables?.filter((x) => x.name?.trim()) ?? [];
-  const filledVend = v.vendors?.filter((x) => x.name?.trim()) ?? [];
+const FoodDetailBody = ({
+  v,
+  versionKey,
+  sessionData,
+  vegetables,
+  vendors,
+  activeSession,
+  setActiveSession,
+  availableSessions,
+  onDeleteSingle,
+  onDeleteAll,
+  onEdit,
+}: FoodDetailBodyProps) => {
+
+  // Derive display values strictly from sessionData (live LS)
+  const resolvedFoodType = sessionData?.foodType || "";
+  const resolvedTime     = sessionData?.timeSlots?.[0]?.value || "—";
+  const resolvedMembers  = sessionData?.members ?? 0;
+
+  const ft         = FOOD_TYPE[resolvedFoodType] ?? FOOD_TYPE["Both"];
+  const sess       = SESSION[activeSession]       ?? { icon: "🗓", color: "text-gray-600" };
+
+  const filledMenu = (sessionData?.menu ?? []).filter((c) => c.items?.some((i) => i.trim()));
+  const filledVeg  = vegetables.filter((x) => x.name?.trim());
+  const filledVend = vendors.filter((x) => x.name?.trim() || x.role?.trim());
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
-  /* ─────────────────────────────────────────────────────
-     handlePrintAll — defined here so it has access to
-     v, filledMenu, filledVeg, filledVend
-  ───────────────────────────────────────────────────── */
+  /* ── Print handler: uses live session data + global veg/vendors ── */
   const handlePrintAll = () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
-    // ── Menu rows ──
-    const menuRows = filledMenu
-      .map((cat) => {
-        const items = cat.items.filter((i) => i.trim());
-        if (!items.length) return "";
-        return items
-          .map(
-            (item, idx) => `
+    const getSessionMenuHTML = (sess: string) => {
+      const menu = sess === activeSession ? (sessionData?.menu ?? []) : (readSessionMenu(v.eventId, sess)?.menu ?? []);
+      const filled = menu.filter((c) => c.items?.some((i) => i.trim()));
+      
+      let rows = "<tr><td colspan='2' style='text-align:center;color:#6b7280;'>No menu items.</td></tr>";
+      if (filled.length > 0) {
+        rows = filled.map((cat) => {
+          const items = cat.items.filter((i) => i.trim());
+          if (!items.length) return "";
+          return items.map((item, idx) => `
             <tr>
-              ${idx === 0
-                ? `<td rowspan="${items.length}" class="cat">${cat.category}</td>`
-                : ""}
+              ${idx === 0 ? `<td rowspan="${items.length}" class="cat">${cat.category}</td>` : ""}
               <td>${item}</td>
-            </tr>`
-          )
-          .join("");
-      })
-      .join("");
+            </tr>`).join("");
+        }).join("");
+      }
 
-    // ── Vegetable rows ──
+      return `
+        <h2>🍛 ${sess} Menu</h2>
+        <table>
+          <thead><tr><th>Category</th><th>Items</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    };
+
+    const hasM = availableSessions.includes("Morning");
+    const hasA = availableSessions.includes("Afternoon");
+    const hasE = availableSessions.includes("Evening");
+    const hasN = availableSessions.includes("Night");
+
+    let menuHTML = "";
+    if (hasM && hasA && hasE && hasN) {
+      menuHTML = `
+        <div style="display: flex; gap: 24px; align-items: flex-start;">
+          <div style="flex: 1; min-width: 0;">
+            ${getSessionMenuHTML("Morning")}
+            ${getSessionMenuHTML("Evening")}
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            ${getSessionMenuHTML("Afternoon")}
+            ${getSessionMenuHTML("Night")}
+          </div>
+        </div>
+      `;
+    } else if (hasM && hasA && hasE) {
+      menuHTML = `
+        <div style="display: flex; gap: 24px; align-items: flex-start;">
+          <div style="flex: 1; min-width: 0;">${getSessionMenuHTML("Morning")}</div>
+          <div style="flex: 1; min-width: 0;">${getSessionMenuHTML("Afternoon")}</div>
+        </div>
+        <div>${getSessionMenuHTML("Evening")}</div>
+      `;
+    } else if (hasM && hasA) {
+      menuHTML = `
+        <div style="display: flex; gap: 24px; align-items: flex-start;">
+          <div style="flex: 1; min-width: 0;">${getSessionMenuHTML("Morning")}</div>
+          <div style="flex: 1; min-width: 0;">${getSessionMenuHTML("Afternoon")}</div>
+        </div>
+      `;
+    } else if (hasM) {
+      menuHTML = `<div>${getSessionMenuHTML("Morning")}</div>`;
+    } else {
+      menuHTML = availableSessions.length > 0
+        ? availableSessions.map(sess => `<div>${getSessionMenuHTML(sess)}</div>`).join("")
+        : `<h2>🍛 Menu</h2><table><thead><tr><th>Category</th><th>Items</th></tr></thead><tbody><tr><td colspan='2' style='text-align:center;color:#6b7280;'>No menu items.</td></tr></tbody></table>`;
+    }
+
     const vegRows = filledVeg
-      .map(
-        (veg, i) => `
+      .map((veg, i) => `
         <tr>
           <td>${i + 1}</td>
           <td>${veg.name}</td>
           <td>${veg.qty || "—"}</td>
           <td>${veg.unit || "—"}</td>
-        </tr>`
-      )
+        </tr>`)
       .join("");
 
-    // ── Vendor rows ──
     const vendorRows = filledVend
-      .map(
-        (ven, i) => `
+      .map((ven, i) => `
         <tr>
           <td>${i + 1}</td>
           <td>${ven.role || "—"}</td>
-          <td>${ven.name}</td>
-          <td>${ven.phone}</td>
-        </tr>`
-      )
+          <td>${ven.name || "—"}</td>
+          <td>${ven.phone || "—"}</td>
+        </tr>`)
       .join("");
 
     const baseUrl = window.location.origin;
@@ -658,8 +747,6 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #111; }
-
-          /* ── Navbar ── */
           .navbar { width: 100%; margin-bottom: 0; }
           .navbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
           .navbar-left { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
@@ -680,41 +767,27 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
           .navbar-right { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; }
           .navbar-right img { width: 70px; height: auto; object-fit: contain; display: block; }
           .navbar-bar { width: 100%; height: 7px; background: #15803d; margin-top: 10px; }
-
-          /* ── Event meta bar ── */
           .meta-bar { width: 100%; background: #f0fdf4; border-top: 1px solid #bbf7d0; border-bottom: 2px solid #15803d; padding: 7px 0; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
           .meta-bar-left { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #166534; font-weight: 700; }
           .meta-bar-left .dot { color: #4ade80; }
           .meta-bar-right { font-size: 11px; color: #6b7280; }
-
-          /* ── Section headings ── */
           h2 { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; font-size: 14px; font-weight: 800; color: #15803d; text-transform: uppercase; letter-spacing: 0.08em; }
           h2::before { content: ''; display: inline-block; width: 4px; height: 16px; background: #15803d; border-radius: 2px; }
-
-          /* ── Tables ── */
           table { width: 100%; border-collapse: collapse; margin-top: 6px; }
           th, td { border: 1px solid #000; padding: 8px 10px; font-size: 13px; text-align: left; }
           th { background: #15803d; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
           .cat { background: #dcfce7; font-weight: 700; color: #14532d; vertical-align: top; }
           tbody tr:nth-child(even) td:not(.cat) { background: #f9fffe; }
-
-          /* ── Footer ── */
           .footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; }
           .footer-brand { font-weight: 700; color: #15803d; }
-
           @media print {
             body { padding: 0; }
             .navbar, .navbar-bar, .meta-bar, th, .cat { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             @page { margin: 0.3in 0.3in; size: A4; }
-            h2 { page-break-after: avoid; }
-            table { page-break-inside: auto; }
-            tr { page-break-inside: avoid; }
           }
         </style>
       </head>
       <body>
-
-        <!-- Navbar -->
         <div class="navbar">
           <div class="navbar-inner">
             <div class="navbar-left">
@@ -739,73 +812,41 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
           </div>
           <div class="navbar-bar"></div>
         </div>
-
-        <!-- Event meta bar -->
         <div class="meta-bar">
           <div class="meta-bar-left">
             <span>🍛</span>
             <span>${v.event?.nameEnglish || v.event?.nameTamil || "Event"}</span>
             ${v.location ? `<span class="dot">•</span><span>${v.location}</span>` : ""}
-            ${v.session   ? `<span class="dot">•</span><span>${v.session}</span>` : ""}
-            ${v.time      ? `<span class="dot">•</span><span>${v.time}</span>`    : ""}
+            ${resolvedMembers > 0 ? `<span class="dot">•</span><span>${resolvedMembers} members</span>` : ""}
           </div>
           <div class="meta-bar-right">
             Printed: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
           </div>
         </div>
-
-        <!-- Menu -->
-        <h2>🍛 Menu</h2>
+        ${menuHTML}
+        <h2>🥦 Vegetables / Ingredients</h2>
         <table>
-          <thead>
-            <tr><th>Category</th><th>Items</th></tr>
-          </thead>
-          <tbody>
-            ${menuRows || "<tr><td colspan='2' style='text-align:center;color:#6b7280;'>No menu items.</td></tr>"}
-          </tbody>
+          <thead><tr><th>#</th><th>Name</th><th>Qty</th><th>Unit</th></tr></thead>
+          <tbody>${vegRows || "<tr><td colspan='4' style='text-align:center;color:#6b7280;'>No vegetables listed.</td></tr>"}</tbody>
         </table>
-
-        <!-- Vegetables -->
-        <h2>🥦 Vegetables</h2>
-        <table>
-          <thead>
-            <tr><th>#</th><th>Name</th><th>Qty</th><th>Unit</th></tr>
-          </thead>
-          <tbody>
-            ${vegRows || "<tr><td colspan='4' style='text-align:center;color:#6b7280;'>No vegetables listed.</td></tr>"}
-          </tbody>
-        </table>
-
-        <!-- Vendors -->
         <h2>🧑‍🍳 Vendors</h2>
         <table>
-          <thead>
-            <tr><th>#</th><th>Role</th><th>Name</th><th>Phone</th></tr>
-          </thead>
-          <tbody>
-            ${vendorRows || "<tr><td colspan='4' style='text-align:center;color:#6b7280;'>No vendors listed.</td></tr>"}
-          </tbody>
+          <thead><tr><th>#</th><th>Role</th><th>Name</th><th>Phone</th></tr></thead>
+          <tbody>${vendorRows || "<tr><td colspan='4' style='text-align:center;color:#6b7280;'>No vendors listed.</td></tr>"}</tbody>
         </table>
-
-        <!-- Footer -->
         <div class="footer">
           <span class="footer-brand">MRS Catering</span>
-          <span>Catering Management System · Full Booking · Save ${v.version}</span>
+          <span>Catering Management System · ${activeSession} Session · Save ${v.version}</span>
           <span>Thank you for choosing us 🙏</span>
         </div>
-
       </body>
       </html>
     `);
-
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
   };
 
-  /* ─────────────────────────────────────────────────────
-     RENDER
-  ───────────────────────────────────────────────────── */
   return (
     <AnimatePresence mode="wait">
       <motion.div key={versionKey} variants={contentSwap} initial="hidden" animate="show" exit="exit" className="flex flex-col gap-4">
@@ -832,17 +873,28 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
               <div className={`flex-shrink-0 flex flex-col items-center justify-center w-14 h-14 rounded-2xl border-2 gap-1 ${ft.bg} ${ft.border}`}>
                 <span className="text-xl leading-none">{ft.emoji}</span>
                 <span className={`text-[8px] font-extrabold uppercase tracking-wide ${ft.text} leading-none`}>
-                  {v.foodType === "Both" ? "Mixed" : v.foodType}
+                  {resolvedFoodType === "Both" ? "Mixed" : resolvedFoodType || "—"}
                 </span>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            {/* Session switcher tabs */}
+            <div className="mb-4">
+              <p className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-gray-300 mb-2">Select Session</p>
+              <SessionSwitcher
+                eventId={v.eventId}
+                active={activeSession}
+                onSelect={setActiveSession}
+                availableSessions={availableSessions}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-4">
               <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-full font-medium">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
                 </svg>
-                {fmtDate(v.savedAt)}
+                {fmtDate(v.savedAt ?? "")}
               </span>
               {v.location && (
                 <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-full font-medium">
@@ -852,22 +904,25 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
                   {v.location}
                 </span>
               )}
-              <span className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold border ${ft.bg} ${ft.text} ${ft.border}`}>
-                {ft.label}
-              </span>
+              {resolvedFoodType && (
+                <span className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold border ${ft.bg} ${ft.text} ${ft.border}`}>
+                  {ft.label}
+                </span>
+              )}
             </div>
 
-            <div className="grid grid-cols-3 gap-2 mt-4">
+            <div className="grid grid-cols-4 gap-2">
               {[
-                { icon: sess.icon, label: "Session", val: v.session,                   valClass: sess.color,       mono: false },
-                { icon: "⏰",      label: "Time",    val: v.time,                       valClass: "text-red-600",   mono: true  },
-                { icon: "🍛",      label: "Menu",    val: `${filledMenu.length} cats`,  valClass: "text-gray-700",  mono: false },
+                { icon: sess.icon, label: "Session", val: activeSession,              valClass: sess.color,       mono: false },
+                { icon: "⏰",      label: "Time",    val: resolvedTime,               valClass: "text-red-600",   mono: true  },
+                { icon: "👥",      label: "Members", val: resolvedMembers > 0 ? String(resolvedMembers) : "—", valClass: "text-gray-700", mono: true },
+                { icon: "🍛",      label: "Menu",    val: `${filledMenu.length} cats`, valClass: "text-gray-700", mono: false },
               ].map(({ icon, label, val, valClass, mono }) => (
                 <div key={label} className="flex flex-col gap-1 bg-gray-50/80 rounded-2xl px-3 py-2.5 border border-gray-100">
                   <span className="text-[9px] font-extrabold uppercase tracking-[0.18em] text-gray-400">{label}</span>
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm">{icon}</span>
-                    <span className={`text-xs font-bold ${valClass}`} style={mono ? { fontFamily: "'JetBrains Mono',monospace" } : {}}>
+                    <span className={`text-xs font-bold ${valClass} truncate`} style={mono ? { fontFamily: "'JetBrains Mono',monospace" } : {}}>
                       {val}
                     </span>
                   </div>
@@ -877,7 +932,6 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
 
             <div className="mt-4 pt-4 border-t border-gray-50">
               <p className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-gray-300 mb-2">Manage This Booking</p>
-              {/* DeleteActions rendered as fixed floating buttons — onPrint wired to handlePrintAll */}
               <DeleteActions
                 onDeleteSingle={onDeleteSingle}
                 onDeleteAll={onDeleteAll}
@@ -888,10 +942,23 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
           </div>
         </div>
 
+        {/* ── SESSION DATA SOURCE NOTICE ── */}
+        {sessionData === null && (
+          <div className="flex items-center gap-3 px-5 py-4 bg-amber-50 border border-amber-100 rounded-2xl">
+            <span className="text-lg">⚠️</span>
+            <div>
+              <p className="text-xs font-bold text-amber-700">No data for {activeSession} session</p>
+              <p className="text-[11px] text-amber-500 mt-0.5">
+                No localStorage key found for <code className="font-mono">food-menu-{v.eventId}-{activeSession}</code>. Select another session or book this slot.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ── MENU ── */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-          <SectionHead icon="🍛" title="Menu Categories" count={filledMenu.length} />
-          {filledMenu.length === 0 ? <Empty msg="No menu items." /> : (
+          <SectionHead icon="🍛" title={`Menu · ${activeSession}`} count={filledMenu.length} />
+          {filledMenu.length === 0 ? <Empty msg={`No menu items for ${activeSession}.`} /> : (
             <motion.div className="px-4 py-3 flex flex-col gap-2" variants={stagger} initial="hidden" animate="show">
               {filledMenu.map((cat, idx) => {
                 const isOpen = activeMenu === cat.id;
@@ -942,10 +1009,10 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
           )}
         </div>
 
-        {/* ── VEGETABLES ── */}
+        {/* ── VEGETABLES (global) ── */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <SectionHead icon="🥦" title="Vegetables / Ingredients" count={filledVeg.length} />
-          {filledVeg.length === 0 ? <Empty msg="No vegetables listed." /> : (
+          {filledVeg.length === 0 ? <Empty msg="No vegetables in global list." /> : (
             <>
               <div className="grid grid-cols-12 px-5 py-2 bg-red-50/60 border-b border-red-50">
                 <span className="col-span-6 text-[9px] font-extrabold uppercase tracking-[0.2em] text-red-300">Ingredient</span>
@@ -979,67 +1046,51 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
           )}
         </div>
 
-        {/* ── VENDORS ── */}
+        {/* ── VENDORS (global vendors_v2) ── */}
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
           <SectionHead icon="🧑‍🍳" title="Vendors / Contacts" count={filledVend.length} />
-          {filledVend.length === 0 ? <Empty msg="No vendors listed." /> : (
+          {filledVend.length === 0 ? <Empty msg="No vendors in global list." /> : (
             <div className="px-4 py-3 flex flex-col gap-2.5">
               {filledVend.map((vend, i) => (
-                <motion.div
-                  key={i}
-                  variants={scaleCard}
+                <motion.div key={i} variants={scaleCard}
                   whileHover={{ scale: 1.01, transition: { duration: 0.15 } }}
                   className="flex items-center gap-3.5 px-4 py-3.5 rounded-2xl border border-gray-100 bg-gray-50/50 hover:bg-red-50/40 hover:border-red-100 transition-all duration-200 group"
                 >
-                  {/* Avatar */}
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-sm text-white flex-shrink-0 shadow-md shadow-red-100"
-                    style={{ background: "linear-gradient(135deg,#e11d48,#f43f5e)" }}
-                  >
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-sm text-white flex-shrink-0 shadow-md shadow-red-100"
+                    style={{ background: "linear-gradient(135deg,#e11d48,#f43f5e)" }}>
                     {(vend.name || vend.role || "?").charAt(0).toUpperCase()}
                   </div>
-
-                  {/* Text block: Role → Vendor Name → Phone */}
                   <div className="flex flex-col flex-1 min-w-0 gap-0.5">
-                    {vend.role?.trim() && vend.role.trim() !== vend.name.trim() && (
+                    {vend.role?.trim() && (
                       <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-red-400 leading-none truncate">
                         {vend.role}
                       </span>
                     )}
                     <span className="text-sm font-bold text-gray-800 truncate group-hover:text-red-700 transition-colors leading-snug">
-                      {vend.name || <span className="text-gray-300 font-normal italic">No name</span>}
+                      {vend.name?.trim()
+                        ? vend.name
+                        : <span className="text-gray-300 font-normal italic">Unassigned</span>}
                     </span>
                     {vend.phone?.trim() ? (
-                      <a
-                        href={`tel:${vend.phone}`}
+                      <a href={`tel:${vend.phone}`}
                         className="text-xs text-gray-400 hover:text-red-500 transition-colors"
                         style={{ fontFamily: "'JetBrains Mono',monospace" }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                        onClick={(e) => e.stopPropagation()}>
                         {vend.phone}
                       </a>
                     ) : (
                       <span className="text-xs text-gray-300">No phone listed</span>
                     )}
                   </div>
-
-                  {/* Serial number */}
-                  <span
-                    className="text-[10px] font-extrabold text-gray-300 flex-shrink-0"
-                    style={{ fontFamily: "'JetBrains Mono',monospace" }}
-                  >
+                  <span className="text-[10px] font-extrabold text-gray-300 flex-shrink-0" style={{ fontFamily: "'JetBrains Mono',monospace" }}>
                     {String(i + 1).padStart(2, "0")}
                   </span>
-
-                  {/* Call button */}
                   {vend.phone?.trim() && (
-                    <a
-                      href={`tel:${vend.phone}`}
+                    <a href={`tel:${vend.phone}`}
                       onClick={(e) => e.stopPropagation()}
-                      title={`Call ${vend.name}`}
+                      title={`Call ${vend.name || vend.role}`}
                       className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-white transition-all duration-200 shadow-sm hover:shadow-md hover:scale-105 active:scale-95"
-                      style={{ background: "linear-gradient(135deg,#e11d48,#f43f5e)" }}
-                    >
+                      style={{ background: "linear-gradient(135deg,#e11d48,#f43f5e)" }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.6 19.79 19.79 0 0 1 1.61 5 2 2 0 0 1 3.6 2.87h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.5a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
                       </svg>
@@ -1057,7 +1108,7 @@ const FoodDetailBody = ({ v, versionKey, onDeleteSingle, onDeleteAll, onEdit }: 
             <svg width="12" height="12" viewBox="0 0 24 24" fill="#e11d48"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" /></svg>
           </div>
           <p className="text-[10px] text-gray-300 tracking-[0.22em] uppercase font-bold">
-            Read-only · {ordinal(v.version)} Save · {v.eventId}
+            Read-only · {ordinal(v.version ?? 0)} Save · {activeSession} · {v.eventId}
           </p>
         </div>
 
@@ -1077,30 +1128,74 @@ type ModalState =
 const AdminFoodView = () => {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const auth = getAuth();
-  const goBack = useBackNavigation({ role: auth?.role ?? "admin" });
-  const [versions, setVersions] = useState<FoodVersion[]>([]);
+  const auth     = getAuth();
+  const goBack   = useBackNavigation({ role: auth?.role ?? "admin" });
+
+  // Timeline versions (from bookFoodData)
+  const [versions, setVersions] = useState<FoodBookingPayload[]>([]);
   const [active,   setActive]   = useState<number>(0);
   const [ready,    setReady]    = useState(false);
   const [modal,    setModal]    = useState<ModalState>({ open: false });
 
+  // Session state
+  const [activeSession, setActiveSession] = useState<string>("Morning");
+
+  // Live data from LS (refreshed on session/version change)
+  const [sessionData,   setSessionData]   = useState<SessionMenuData | null>(null);
+  const [vegetables,    setVegetables]    = useState<Vegetable[]>([]);
+  const [vendors,       setVendors]       = useState<Vendor[]>([]);
+  const [availableSessions, setAvailableSessions] = useState<string[]>([]);
+
+  /* ── 1. Load timeline on mount ── */
   useEffect(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as FoodBookingPayload[];
-      if (!Array.isArray(raw)) { setVersions([]); return; }
+    if (!id) return;
+    const built = buildVersionTimeline(id);
+    setVersions(built);
+    setActive(0);
 
-      const all      = normaliseVersions(raw);
-      const filtered = all
-        .filter((d) => String(d.eventId).trim() === String(id).trim())
-        .sort((a, b) => b.version - a.version);
+    // Determine which sessions have LS data
+    const hasSess = ALL_SESSIONS.filter(
+      (s) => !!localStorage.getItem(`food-menu-${id}-${s}`)
+    );
+    setAvailableSessions(hasSess);
 
-      setVersions(filtered);
-      setActive(0);
-    } catch { setVersions([]); }
+    // Default active session: the one matching the latest save, or first available
+    if (built.length > 0) {
+      const firstSess = built[0].session.split(", ")[0] as any;
+      if (firstSess && hasSess.includes(firstSess)) {
+        setActiveSession(firstSess);
+      } else if (hasSess.length > 0) {
+        setActiveSession(hasSess[0]);
+      }
+    } else if (hasSess.length > 0) {
+      setActiveSession(hasSess[0]);
+    }
+
+    // Global data
+    setVegetables(readVegetables(id));
+    setVendors(readVendors(id));
 
     const t = setTimeout(() => setReady(true), 80);
     return () => clearTimeout(t);
   }, [id]);
+
+  /* ── 2. Reload session data when activeSession or id changes ── */
+  useEffect(() => {
+    if (!id) return;
+    setSessionData(readSessionMenu(id, activeSession));
+  }, [id, activeSession]);
+
+  /* ── 3. When version changes, switch to that version's session ── */
+  useEffect(() => {
+    if (versions.length === 0) return;
+    const v = versions[active];
+    if (v) {
+      const firstSess = v.session.split(", ")[0];
+      if (firstSess && availableSessions.includes(firstSess)) {
+        setActiveSession(firstSess);
+      }
+    }
+  }, [active, versions, availableSessions]);
 
   const handleConfirm = () => {
     if (!modal.open || !id) return;
@@ -1187,8 +1282,14 @@ const AdminFoodView = () => {
         />
         <FoodDetailBody
           v={current}
-          versionKey={`${current.eventId}-v${current.version}-${active}`}
-          onDeleteSingle={() => setModal({ open: true, mode: "single", version: current.version })}
+          versionKey={`${current.eventId}-v${current.version}-${active}-${activeSession}`}
+          sessionData={sessionData}
+          vegetables={vegetables}
+          vendors={vendors}
+          activeSession={activeSession}
+          setActiveSession={setActiveSession}
+          availableSessions={availableSessions}
+          onDeleteSingle={() => setModal({ open: true, mode: "single", version: current.version ?? 0 })}
           onDeleteAll={() => setModal({ open: true, mode: "all" })}
           onEdit={() =>
             navigate(`/book-food/${current.eventId}`, {

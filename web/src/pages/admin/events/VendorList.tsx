@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -9,18 +8,10 @@ import { FaDownload, FaPlus, FaTrash } from "react-icons/fa";
 
 /* ─────────────────────────── Types ─────────────────────────── */
 
-export type PaidStatus = "Paid" | "Unpaid" | "Nill";
-
 export type Vendor = {
   role: string;
   phone: string;
   assignedVendor: string;
-  payment: string;
-  advance: string;
-  balance: string;
-  paidStatus: PaidStatus;
-  paidBy: string;
-  paidDate: string;
 };
 
 interface VendorListProps {
@@ -32,15 +23,15 @@ interface VendorListProps {
   location?: string;
   session?: string;
   displayTime?: string;
+  eventId?: string;
 }
 
 type VendorField = keyof Vendor;
 
 /* ─────────────────────────── Constants ─────────────────────────── */
 
-const STORAGE_KEY = "vendors_v2";
-const PAID_BY_OPTIONS = ["Murugan", "Selvam", "Rajan", "Priya", "Karthik"];
-const PAID_STATUS_OPTIONS: PaidStatus[] = ["Nill", "Unpaid", "Paid"];
+export const getVendorsStorageKey = (eventId?: string) =>
+  eventId ? `vendors_v2-${eventId}` : "vendors_v2";
 
 const DEFAULT_ROLES = [
   "Sweet",
@@ -74,27 +65,11 @@ const DEFAULT_ROLES = [
 
 /* ─────────────────────────── Helpers ─────────────────────────── */
 
-const calcBalance = (payment: string, advance: string): string => {
-  const p = parseFloat(payment) || 0;
-  const a = parseFloat(advance) || 0;
-  if (p === 0 && a === 0) return "";
-  return String(p - a);
-};
-
 const createVendor = (role = ""): Vendor => ({
   role,
   phone: "",
   assignedVendor: "",
-  payment: "",
-  advance: "",
-  balance: "",
-  paidStatus: "Nill",
-  paidBy: "",
-  paidDate: "",
 });
-
-const fmtINR = (val: string | number) =>
-  `₹${Number(val).toLocaleString("en-IN")}`;
 
 /* ─────────────────────────── Shared styles ─────────────────────────── */
 
@@ -110,111 +85,15 @@ const thCls =
 const tdCls = "border-b border-r border-green-100 align-middle last:border-r-0";
 
 /* ─────────────────────────── Column config ─────────────────────────── */
-// 11 columns total — widths must sum >= minWidth on table
+
 const COLS = [
   { width: 52  }, // 0  S.No
-  { width: 215 }, // 1  Role
-  { width: 145 }, // 2  Phone
-  { width: 158 }, // 3  Assigned Vendor
-  { width: 128 }, // 4  Payment
-  { width: 128 }, // 5  Advance
-  { width: 128 }, // 6  Balance  ← read-only
-  { width: 116 }, // 7  Paid Status
-  { width: 128 }, // 8  Paid By
-  { width: 136 }, // 9  Paid Date
-  { width: 58  }, // 10 Del
+  { width: 260 }, // 1  Role
+  { width: 200 }, // 2  Phone
+  { width: 280 }, // 3  Assigned Vendor
+  { width: 58  }, // 4  Del
 ];
-const TABLE_MIN_WIDTH = COLS.reduce((s, c) => s + c.width, 0); // 1392
-
-/* ═══════════════════════════════════════════════════════════════
-   Inline Dropdown
-═══════════════════════════════════════════════════════════════ */
-
-interface InlineDropdownProps {
-  value: string;
-  options: string[];
-  placeholder?: string;
-  onChange: (val: string) => void;
-  onKeyDown?: (e: KeyboardEvent<HTMLButtonElement>) => void;
-}
-
-const InlineDropdown = ({
-  value,
-  options,
-  placeholder = "Select…",
-  onChange,
-  onKeyDown,
-}: InlineDropdownProps) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative w-full">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        onKeyDown={onKeyDown}
-        className="flex w-full items-center justify-between gap-1 px-3 py-2.5 text-sm outline-none bg-transparent focus:bg-green-50"
-      >
-        <span className={value ? "text-green-950 truncate" : "text-green-300 text-sm"}>
-          {value || placeholder}
-        </span>
-        <svg
-          className={`h-3.5 w-3.5 shrink-0 text-green-500 transition-transform ${open ? "rotate-180" : ""}`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute z-50 left-0 top-full mt-0.5 w-max min-w-full rounded-lg border border-green-200 bg-white shadow-xl overflow-hidden">
-          {options.map(opt => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => { onChange(opt); setOpen(false); }}
-              className={`w-full px-4 py-2.5 text-left text-sm transition hover:bg-green-50 ${
-                value === opt ? "bg-green-100 font-semibold text-green-800" : "text-green-950"
-              }`}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ═══════════════════════════════════════════════════════════════
-   Status Badge
-═══════════════════════════════════════════════════════════════ */
-
-const statusStyle: Record<PaidStatus, string> = {
-  Paid:   "bg-emerald-100 text-emerald-700 border border-emerald-200",
-  Unpaid: "bg-red-100 text-red-600 border border-red-200",
-  Nill:   "bg-gray-100 text-gray-500 border border-gray-200",
-};
-
-const StatusBadge = ({ status }: { status: PaidStatus }) => (
-  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusStyle[status]}`}>
-    {status}
-  </span>
-);
+const TABLE_MIN_WIDTH = COLS.reduce((s, c) => s + c.width, 0); // 850
 
 /* ═══════════════════════════════════════════════════════════════
    Main VendorList Component
@@ -229,6 +108,7 @@ const VendorList = ({
   location = "",
   session = "",
   displayTime = "",
+  eventId,
 }: VendorListProps) => {
   const didInitRef = useRef(false);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -238,44 +118,36 @@ const VendorList = ({
   const [rowSnapshot, setRowSnapshot]   = useState<Vendor | null>(null);
   const [highlightedRow, setHighlightedRow] = useState<number | null>(null);
 
-  // Tab-order for keyboard nav (balance is read-only, excluded)
-  const fields: VendorField[] = [
-    "role", "phone", "assignedVendor",
-    "payment", "advance",
-    "paidStatus", "paidBy", "paidDate",
-  ];
+  const fields: VendorField[] = ["role", "phone", "assignedVendor"];
 
   /* ── Init from localStorage ── */
   useEffect(() => {
     if (didInitRef.current) return;
     didInitRef.current = true;
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getVendorsStorageKey(eventId));
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as Vendor[];
         if (Array.isArray(parsed)) {
-          const migrated = parsed.map(v => ({
-            ...createVendor(), ...v,
-            balance: calcBalance(v.payment ?? "", v.advance ?? ""),
-          }));
+          const migrated = parsed.map(v => ({ ...createVendor(), ...v }));
           setVendors(migrated);
           setSavedVendors(migrated);
           return;
         }
-      } catch { localStorage.removeItem(STORAGE_KEY); }
+      } catch { localStorage.removeItem(getVendorsStorageKey(eventId)); }
     }
     const init = DEFAULT_ROLES.map(r => createVendor(r));
     setVendors(init);
     setSavedVendors(init);
-  }, [setSavedVendors, setVendors]);
+  }, [setSavedVendors, setVendors, eventId]);
 
   /* ── Persist on every change ── */
   useEffect(() => {
     if (!didInitRef.current) return;
     const safe = vendors.map(v => ({ ...v }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+    localStorage.setItem(getVendorsStorageKey(eventId), JSON.stringify(safe));
     setSavedVendors(safe);
-  }, [vendors, setSavedVendors]);
+  }, [vendors, setSavedVendors, eventId]);
 
   useEffect(() => {
     if (highlightedRow === null) return;
@@ -289,14 +161,6 @@ const VendorList = ({
     const node = inputRefs.current[`${editingRow}-${editingField}`];
     if (node) requestAnimationFrame(() => { node.focus(); node.select(); });
   }, [editingField, editingRow]);
-
-  const printableVendors = useMemo(
-    () => (savedVendors ?? vendors).filter(v =>
-      v.role?.trim() || v.phone?.trim() || v.assignedVendor?.trim() ||
-      v.payment?.trim() || v.advance?.trim()
-    ),
-    [savedVendors, vendors]
-  );
 
   /* ── Edit helpers ── */
   const setInputRef = (ri: number, field: VendorField, node: HTMLInputElement | null) => {
@@ -328,14 +192,7 @@ const VendorList = ({
 
   const updateVendor = <K extends VendorField>(ri: number, field: K, value: Vendor[K]) => {
     const up = [...vendors];
-    const next = { ...up[ri], [field]: value };
-    if (field === "payment" || field === "advance") {
-      next.balance = calcBalance(
-        field === "payment" ? (value as string) : next.payment,
-        field === "advance" ? (value as string) : next.advance,
-      );
-    }
-    up[ri] = next;
+    up[ri] = { ...up[ri], [field]: value };
     setVendors(up);
   };
 
@@ -376,23 +233,11 @@ const VendorList = ({
     if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
   };
 
-  const handleDropdownKeyDown = (e: KeyboardEvent<HTMLButtonElement>, ri: number, field: VendorField) => {
-    if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
-    if (e.key === "Enter")  { e.preventDefault(); handleEnter(ri, field); }
-  };
-
-  /* ── Live totals ── */
-  const totals = useMemo(() => {
-    const payment = vendors.reduce((s, v) => s + (parseFloat(v.payment) || 0), 0);
-    const advance = vendors.reduce((s, v) => s + (parseFloat(v.advance) || 0), 0);
-    return { payment, advance, balance: payment - advance };
-  }, [vendors]);
-
   /* ── Print / PDF ── */
   const openPrintWindow = (autoPrint = false) => {
-    const totalPayment = printableVendors.reduce((s, v) => s + (parseFloat(v.payment) || 0), 0);
-    const totalAdvance = printableVendors.reduce((s, v) => s + (parseFloat(v.advance) || 0), 0);
-    const totalBalance = totalPayment - totalAdvance;
+    const printableVendors = (savedVendors ?? vendors).filter(v =>
+      v.role?.trim() || v.phone?.trim() || v.assignedVendor?.trim()
+    );
 
     const printRows = printableVendors.map((v, i) => `
       <tr>
@@ -400,22 +245,6 @@ const VendorList = ({
         <td>${v.role || "—"}</td>
         <td>${v.phone || "—"}</td>
         <td>${v.assignedVendor || "—"}</td>
-        <td style="text-align:right">${v.payment ? fmtINR(v.payment) : "—"}</td>
-        <td style="text-align:right">${v.advance ? fmtINR(v.advance) : "—"}</td>
-        <td style="text-align:right;font-weight:600;color:${parseFloat(v.balance) < 0 ? "#dc2626" : "#166534"}">
-          ${v.balance !== "" ? fmtINR(v.balance) : "—"}
-        </td>
-        <td style="text-align:center">
-          <span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;
-            background:${v.paidStatus === "Paid" ? "#d1fae5" : v.paidStatus === "Unpaid" ? "#fee2e2" : "#f3f4f6"};
-            color:${v.paidStatus === "Paid" ? "#065f46" : v.paidStatus === "Unpaid" ? "#991b1b" : "#6b7280"}">
-            ${v.paidStatus}
-          </span>
-        </td>
-        <td>${v.paidBy || "—"}</td>
-        <td>${v.paidDate
-          ? new Date(v.paidDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
-          : "—"}</td>
       </tr>`).join("");
 
     const win = window.open("", "_blank");
@@ -454,7 +283,6 @@ const VendorList = ({
         th,td{border:1px solid #cfe5d7;padding:6px 9px;text-align:left}
         th{background:#e6f7ed;color:#166534;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
         tbody tr:nth-child(even){background:#fbfffc}
-        tfoot td{background:#e6f7ed;font-weight:700;color:#166534;border-top:2px solid #198754}
         .footer{margin-top:16px;padding-top:8px;border-top:1px solid #d7eadf;font-size:11px;color:#6b8f79;text-align:center}
         @media print{body{background:#fff}.page{max-width:100%}}
       </style>
@@ -490,23 +318,10 @@ const VendorList = ({
           <th>Role</th>
           <th>Phone</th>
           <th>Assigned Vendor</th>
-          <th style="text-align:right">Payment (₹)</th>
-          <th style="text-align:right">Advance (₹)</th>
-          <th style="text-align:right">Balance (₹)</th>
-          <th style="text-align:center">Status</th>
-          <th>Paid By</th>
-          <th>Paid Date</th>
         </tr></thead>
         <tbody>
-          ${printRows || `<tr><td colspan="10" style="text-align:center;color:#6b8f79;padding:16px">No vendor data available</td></tr>`}
+          ${printRows || `<tr><td colspan="4" style="text-align:center;color:#6b8f79;padding:16px">No vendor data available</td></tr>`}
         </tbody>
-        <tfoot><tr>
-          <td colspan="4" style="text-align:right;font-size:11px;letter-spacing:.04em">TOTALS</td>
-          <td style="text-align:right">${fmtINR(totalPayment)}</td>
-          <td style="text-align:right">${fmtINR(totalAdvance)}</td>
-          <td style="text-align:right;color:${totalBalance < 0 ? "#dc2626" : "#166534"}">${fmtINR(totalBalance)}</td>
-          <td colspan="3"></td>
-        </tr></tfoot>
       </table>
       <div class="footer">MRS Caterings &bull; Vendor List &bull; Printed on ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</div>
     </div></body></html>`);
@@ -541,38 +356,8 @@ const VendorList = ({
         </div>
       </div>
 
-      {/* ── Summary strip ── */}
-      <div className="flex flex-wrap items-center gap-5 px-5 py-2.5 bg-green-50 border-b border-green-100 shrink-0">
-        {[
-          { label: "Total Payment", value: fmtINR(totals.payment), cls: "text-green-900" },
-          { label: "Total Advance", value: fmtINR(totals.advance), cls: "text-green-900" },
-          {
-            label: "Total Balance",
-            value: fmtINR(totals.balance),
-            cls: totals.balance < 0 ? "text-red-600" : "text-emerald-700",
-          },
-        ].map((item, i) => (
-          <div key={item.label} className="flex items-center gap-4">
-            {i > 0 && <div className="h-4 w-px bg-green-200" />}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-green-600">
-                {item.label}
-              </span>
-              <span className={`text-sm font-bold ${item.cls}`}>{item.value}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
       {/* ── Scrollable table ── */}
       <div className="overflow-auto">
-        {/*
-          KEY LAYOUT RULES:
-          • tableLayout:"fixed"  → browser MUST honour colgroup widths exactly
-          • minWidth on table    → prevents the outer div from constraining columns
-          • border-r on th/td   → visible column separators
-          • overflow-auto on wrapper → horizontal scroll if viewport is too narrow
-        */}
         <table
           className="border-collapse"
           style={{ width: `${TABLE_MIN_WIDTH}px`, minWidth: `${TABLE_MIN_WIDTH}px`, tableLayout: "fixed" }}
@@ -590,12 +375,6 @@ const VendorList = ({
               <th className={`${thCls} text-left`}>Role</th>
               <th className={`${thCls} text-left`}>Phone Number</th>
               <th className={`${thCls} text-left`}>Assigned Vendor</th>
-              <th className={`${thCls} text-right`}>Payment (₹)</th>
-              <th className={`${thCls} text-right`}>Advance (₹)</th>
-              <th className={`${thCls} text-right`}>Balance (₹)</th>
-              <th className={`${thCls} text-center`}>Status</th>
-              <th className={`${thCls} text-left`}>Paid By</th>
-              <th className={`${thCls} text-left`}>Paid Date</th>
               <th className={`${thCls} text-center`}>Del</th>
             </tr>
           </thead>
@@ -604,13 +383,6 @@ const VendorList = ({
           <tbody>
             {vendors.map((vendor, ri) => {
               const isEditing = editingRow === ri;
-              const balNum = parseFloat(vendor.balance);
-              const balCls =
-                vendor.balance === ""
-                  ? "text-green-300"
-                  : balNum < 0
-                  ? "text-red-600 font-bold"
-                  : "text-emerald-700 font-bold";
 
               const rowBg =
                 highlightedRow === ri
@@ -675,114 +447,6 @@ const VendorList = ({
                     }
                   </td>
 
-                  {/* Payment */}
-                  <td
-                    className={`${tdCls} p-0`}
-                    onClick={e => { e.stopPropagation(); isEditing ? setEditingField("payment") : beginEdit(ri, "payment"); }}
-                  >
-                    {isEditing
-                      ? <input ref={n => setInputRef(ri, "payment", n)} type="number" min="0"
-                          value={vendor.payment}
-                          onChange={e => updateVendor(ri, "payment", e.target.value)}
-                          onKeyDown={e => handleCellKeyDown(e, ri, "payment")}
-                          onClick={e => e.stopPropagation()}
-                          placeholder="0" className={`${inputCls} text-right`} />
-                      : <div className={`${viewCls} justify-end font-medium`}>
-                          {vendor.payment?.trim() ? fmtINR(vendor.payment) : <span className="text-green-300">—</span>}
-                        </div>
-                    }
-                  </td>
-
-                  {/* Advance */}
-                  <td
-                    className={`${tdCls} p-0`}
-                    onClick={e => { e.stopPropagation(); isEditing ? setEditingField("advance") : beginEdit(ri, "advance"); }}
-                  >
-                    {isEditing
-                      ? <input ref={n => setInputRef(ri, "advance", n)} type="number" min="0"
-                          value={vendor.advance}
-                          onChange={e => updateVendor(ri, "advance", e.target.value)}
-                          onKeyDown={e => handleCellKeyDown(e, ri, "advance")}
-                          onClick={e => e.stopPropagation()}
-                          placeholder="0" className={`${inputCls} text-right`} />
-                      : <div className={`${viewCls} justify-end font-medium`}>
-                          {vendor.advance?.trim() ? fmtINR(vendor.advance) : <span className="text-green-300">—</span>}
-                        </div>
-                    }
-                  </td>
-
-                  {/* Balance — read-only */}
-                  <td className={`${tdCls} px-3 py-2 text-right`}>
-                    <span className={balCls}>
-                      {vendor.balance !== ""
-                        ? fmtINR(vendor.balance)
-                        : <span className="text-green-300 font-normal">—</span>}
-                    </span>
-                  </td>
-
-                  {/* Paid Status */}
-                  <td
-                    className={`${tdCls} p-0`}
-                    onClick={e => { e.stopPropagation(); if (!isEditing) beginEdit(ri, "paidStatus"); }}
-                  >
-                    {isEditing
-                      ? <div onClick={e => e.stopPropagation()}>
-                          <InlineDropdown
-                            value={vendor.paidStatus}
-                            options={PAID_STATUS_OPTIONS}
-                            onChange={val => updateVendor(ri, "paidStatus", val as PaidStatus)}
-                            onKeyDown={e => handleDropdownKeyDown(e, ri, "paidStatus")}
-                          />
-                        </div>
-                      : <div className="flex items-center justify-center min-h-[44px] px-2">
-                          <StatusBadge status={vendor.paidStatus} />
-                        </div>
-                    }
-                  </td>
-
-                  {/* Paid By */}
-                  <td
-                    className={`${tdCls} p-0`}
-                    onClick={e => { e.stopPropagation(); if (!isEditing) beginEdit(ri, "paidBy"); }}
-                  >
-                    {isEditing
-                      ? <div onClick={e => e.stopPropagation()}>
-                          <InlineDropdown
-                            value={vendor.paidBy}
-                            options={PAID_BY_OPTIONS}
-                            placeholder="Select…"
-                            onChange={val => updateVendor(ri, "paidBy", val)}
-                            onKeyDown={e => handleDropdownKeyDown(e, ri, "paidBy")}
-                          />
-                        </div>
-                      : <div className={viewCls}>
-                          {vendor.paidBy?.trim() || <span className="text-green-300">—</span>}
-                        </div>
-                    }
-                  </td>
-
-                  {/* Paid Date */}
-                  <td
-                    className={`${tdCls} p-0`}
-                    onClick={e => { e.stopPropagation(); isEditing ? setEditingField("paidDate") : beginEdit(ri, "paidDate"); }}
-                  >
-                    {isEditing
-                      ? <input ref={n => setInputRef(ri, "paidDate", n)} type="date"
-                          value={vendor.paidDate}
-                          onChange={e => updateVendor(ri, "paidDate", e.target.value)}
-                          onKeyDown={e => handleCellKeyDown(e, ri, "paidDate")}
-                          onClick={e => e.stopPropagation()}
-                          className={inputCls} />
-                      : <div className={viewCls}>
-                          {vendor.paidDate?.trim()
-                            ? new Date(vendor.paidDate).toLocaleDateString("en-IN", {
-                                day: "2-digit", month: "short", year: "numeric",
-                              })
-                            : <span className="text-green-300">—</span>}
-                        </div>
-                    }
-                  </td>
-
                   {/* Delete */}
                   <td className={`${tdCls} py-2 text-center`}>
                     <button
@@ -798,38 +462,6 @@ const VendorList = ({
               );
             })}
           </tbody>
-
-          {/* ─────────────────────────────────────────────────────────
-              TOTALS FOOTER
-              Columns:  0   1   2   3  | 4       5       6      | 7  8  9  10
-                       S.No Role Phone Vendor | Pay    Adv     Bal   | Sta By  Date Del
-              colSpan:       4          | 1       1       1      |    4
-          ───────────────────────────────────────────────────────── */}
-          <tfoot>
-            <tr className="bg-green-50">
-              {/* cols 0-3: label */}
-              <td
-                colSpan={4}
-                className="border-t-2 border-b border-r border-green-300 px-4 py-3 text-right text-xs font-extrabold uppercase tracking-widest text-green-700"
-              >
-                Totals
-              </td>
-              {/* col 4: Payment total */}
-              <td className="border-t-2 border-b border-r border-green-300 px-3 py-3 text-right text-sm font-bold text-green-900">
-                {fmtINR(totals.payment)}
-              </td>
-              {/* col 5: Advance total */}
-              <td className="border-t-2 border-b border-r border-green-300 px-3 py-3 text-right text-sm font-bold text-green-900">
-                {fmtINR(totals.advance)}
-              </td>
-              {/* col 6: Balance total */}
-              <td className={`border-t-2 border-b border-r border-green-300 px-3 py-3 text-right text-sm font-bold ${totals.balance < 0 ? "text-red-600" : "text-emerald-700"}`}>
-                {fmtINR(totals.balance)}
-              </td>
-              {/* cols 7-10: empty (Status, PaidBy, PaidDate, Del) */}
-              <td colSpan={4} className="border-t-2 border-b border-green-300 bg-green-50" />
-            </tr>
-          </tfoot>
         </table>
       </div>
     </div>

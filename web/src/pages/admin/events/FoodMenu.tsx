@@ -36,8 +36,7 @@ interface FoodMenuProps {
   location?: string;
   session?: string;
   displayTime?: string;
-  storageKey?: string; // ✅ ADD THIS
-
+  storageKey?: string;
 }
 
 /* ── Shared input class ─────────────────────────────────── */
@@ -50,7 +49,6 @@ const SectionHeading = ({ children }: { children: ReactNode }) => (
     {children}
   </p>
 );
-
 
 /* ── Default Tamil Menu Data ────────────────────────────── */
 const DEFAULT_MENU: FoodMenuCategory[] = [
@@ -196,6 +194,10 @@ const normalizeMenu = (value: unknown): FoodMenuCategory[] | null => {
   return normalized.length > 0 ? normalized : null;
 };
 
+/**
+ * FIX: Accepts the resolved key directly so the initial useState
+ * callback reads from the correct per-session localStorage bucket.
+ */
 const loadInitialMenu = (key: string): FoodMenuCategory[] => {
   if (typeof window === "undefined") {
     return cloneMenu(DEFAULT_MENU);
@@ -269,10 +271,20 @@ const FoodMenu = ({
   displayTime = "",
   storageKey,
 }: FoodMenuProps) => {
-    // ✅ ADD THIS LINE HERE
+  /**
+   * FIX: Resolve the key ONCE before any hooks so that the useState
+   * initialiser, all useEffects and all event handlers use the same
+   * stable key for the entire lifetime of this component instance.
+   */
   const LS_KEY = storageKey || "food-menu";
+
+  /**
+   * FIX: Pass `LS_KEY` directly into the lazy initialiser so the
+   * correct per-session bucket is read on first render instead of
+   * always loading DEFAULT_MENU and then overwriting it in an effect.
+   */
   const [menuCategories, setMenuCategories] = useState<FoodMenuCategory[]>(() =>
-    cloneMenu(DEFAULT_MENU)
+    loadInitialMenu(LS_KEY)
   );
   const [savedMenu, setSavedMenu] = useState<FoodMenuCategory[] | null>(null);
   const [showCategoryPrompt, setShowCategoryPrompt] = useState(false);
@@ -281,7 +293,11 @@ const FoodMenu = ({
   const [focusedItem, setFocusedItem] = useState<FocusedItem>(null);
   const [highlightedItem, setHighlightedItem] = useState<HighlightedItem>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [isHydrated, setIsHydrated] = useState(false);
+  /**
+   * FIX: isHydrated starts true because we already loaded from localStorage
+   * in the useState initialiser above. No need for a second load in useEffect.
+   */
+  const [isHydrated, setIsHydrated] = useState(true);
 
   const categoryInputRef = useRef<HTMLInputElement>(null);
   const menuPrintRef = useRef<HTMLDivElement>(null);
@@ -294,10 +310,15 @@ const FoodMenu = ({
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  /* ── Load once from localStorage after mount ──────────── */
+  /**
+   * FIX: Removed the "load from localStorage after mount" effect that
+   * was racing with the lazy initialiser and always resetting to
+   * DEFAULT_MENU on first render. The lazy initialiser now handles this.
+   *
+   * We only mark hydrated=true here so the auto-save effect below
+   * can safely fire after the first render.
+   */
   useEffect(() => {
-    const initialMenu = loadInitialMenu(LS_KEY);
-    setMenuCategories(initialMenu);
     setIsHydrated(true);
   }, []);
 
@@ -310,9 +331,9 @@ const FoodMenu = ({
     } catch {
       // ignore write errors
     }
-  }, [isHydrated, menuCategories]);
+  }, [isHydrated, menuCategories, LS_KEY]);
 
-  /* ── Optional sync if localStorage changes in another tab */
+  /* ── Sync if localStorage changes in another tab ──────── */
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== LS_KEY) return;
@@ -322,7 +343,7 @@ const FoodMenu = ({
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, []);
+  }, [LS_KEY]);
 
   /* ── Category helpers ─────────────────────────────────── */
   const openCategoryPrompt = () => {

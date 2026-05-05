@@ -60,7 +60,6 @@ const SESSION_DEFAULT_TIME: Record<SessionName, string> = {
   Night: "8:00 PM",
 };
 
-/* ─── SESSION ICONS ─── CHANGE: added session icons for selector UI */
 const SESSION_ICONS: Record<SessionName, string> = {
   Morning: "🌅",
   Afternoon: "☀️",
@@ -71,15 +70,22 @@ const SESSION_ICONS: Record<SessionName, string> = {
 /* ─── Per-session config ─── */
 type TimeSlot = { id: string; value: string };
 
-/* CHANGE: Added `members` and `menu` fields to SessionConfig */
 type SessionConfig = {
   timeSlots: TimeSlot[];
   foodType: FoodType;
-  members: number;          // NEW: number of members per session
-  menu: MenuCategory[];     // NEW: per-session food menu
+  members: number;
+  menu: MenuCategory[];
 };
 
 type SessionsConfig = Record<SessionName, SessionConfig>;
+
+/* ─── Unified localStorage entry per session ─── */
+export type SessionStorageEntry = {
+  menu: MenuCategory[];
+  timeSlots: TimeSlot[];
+  foodType: FoodType;
+  members: number;
+};
 
 /* ─── Per-day booking ─── */
 type DayBooking = {
@@ -100,6 +106,7 @@ type BookFoodStorageEntry = {
   time: string;
   foodType: FoodType;
   menu: MenuCategory[];
+  sessionsMenu: Record<SessionName, MenuCategory[]>;
   vegetables: Vegetable[];
   vendors: Vendor[];
   savedAt: string;
@@ -127,10 +134,9 @@ function resolveStartDate(event: EventType | null): string {
   return new Date().toISOString().split("T")[0];
 }
 
-/* CHANGE: makeDefaultConfig now initialises members and menu fields */
+/** Always returns a fully populated SessionsConfig — no undefined values ever */
 function makeDefaultConfig(): SessionsConfig {
   const config = {} as SessionsConfig;
-
   ALL_SESSIONS.forEach((s) => {
     config[s] = {
       timeSlots: [{ id: uid(), value: SESSION_DEFAULT_TIME[s] }],
@@ -139,8 +145,64 @@ function makeDefaultConfig(): SessionsConfig {
       menu: [],
     };
   });
-
   return config;
+}
+
+/** Ensure a potentially-partial sessionsConfig has all four session keys */
+function ensureFullConfig(partial?: Partial<SessionsConfig>): SessionsConfig {
+  const defaults = makeDefaultConfig();
+  if (!partial) return defaults;
+  ALL_SESSIONS.forEach((s) => {
+    if (!partial[s]) {
+      partial[s] = defaults[s];
+    } else {
+      // Guard every sub-field
+      const c = partial[s]!;
+      if (!Array.isArray(c.timeSlots) || c.timeSlots.length === 0) {
+        c.timeSlots = [{ id: uid(), value: SESSION_DEFAULT_TIME[s] }];
+      }
+      if (c.foodType === undefined) c.foodType = "";
+      if (typeof c.members !== "number") c.members = 0;
+      if (!Array.isArray(c.menu)) c.menu = [];
+    }
+  });
+  return partial as SessionsConfig;
+}
+
+function sessionStorageKey(eventId: string | undefined, session: SessionName): string {
+  return eventId ? `food-menu-${eventId}-${session}` : `food-menu-${session}`;
+}
+
+function readSessionEntry(key: string): SessionStorageEntry | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+
+    // Handle legacy format: plain array = old menu-only entry
+    if (Array.isArray(parsed)) {
+      return { menu: parsed, timeSlots: [], foodType: "", members: 0 };
+    }
+    if (parsed && typeof parsed === "object" && "menu" in parsed) {
+      return parsed as SessionStorageEntry;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionEntry(key: string, entry: SessionStorageEntry): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // ignore
+  }
+}
+
+function readMenuFromEntry(key: string): MenuCategory[] {
+  const entry = readSessionEntry(key);
+  return entry?.menu ?? [];
 }
 
 const MAX_DAYS = 4;
@@ -219,9 +281,7 @@ const TimeSlotEditor = ({
   };
 
   const commitEdit = () => {
-    if (editingId && editVal.trim()) {
-      onEdit(editingId, editVal.trim());
-    }
+    if (editingId && editVal.trim()) onEdit(editingId, editVal.trim());
     setEditingId(null);
     setEditVal("");
   };
@@ -230,6 +290,9 @@ const TimeSlotEditor = ({
     setEditingId(null);
     setEditVal("");
   };
+
+  // Guard: slots may be undefined if state is partially initialised
+  const safeSlots = Array.isArray(slots) ? slots : [];
 
   return (
     <div className="flex flex-col gap-2">
@@ -253,15 +316,14 @@ const TimeSlotEditor = ({
         </div>
       </div>
 
-      {/* Preset chips */}
       {showPresets && (
         <div className="flex flex-wrap gap-1.5 p-2.5 bg-green-50 border border-green-100 rounded-xl">
           {presets.map((p) => {
-            const already = slots.some((s) => s.value === p);
+            const already = safeSlots.some((s) => s.value === p);
             return (
               <button
                 key={p}
-                onClick={() => { if (!already) { onSelectPreset(p); } }}
+                onClick={() => { if (!already) onSelectPreset(p); }}
                 disabled={already}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
                   already
@@ -276,9 +338,8 @@ const TimeSlotEditor = ({
         </div>
       )}
 
-      {/* Slot list */}
       <div className="flex flex-col gap-1.5">
-        {slots.map((slot) =>
+        {safeSlots.map((slot) =>
           editingId === slot.id ? (
             <div key={slot.id} className="flex items-center gap-2">
               <input
@@ -318,7 +379,7 @@ const TimeSlotEditor = ({
               >
                 <FaPencilAlt style={{ fontSize: 9 }} />
               </button>
-              {slots.length > 1 && (
+              {safeSlots.length > 1 && (
                 <button
                   onClick={() => onDelete(slot.id)}
                   className="w-6 h-6 rounded-full bg-white border border-red-100 text-red-400 flex items-center justify-center hover:bg-red-50 transition flex-shrink-0"
@@ -334,60 +395,52 @@ const TimeSlotEditor = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════
-   CHANGE: NEW COMPONENT — SessionSelector
-   Shows session toggle buttons (Morning / Afternoon / Evening / Night)
-   BEFORE the session cards are rendered. Selecting a session here
-   automatically marks it as active in the day's sessions array.
-   ════════════════════════════════════════════════════════ */
+/* ─── SessionSelector ─── */
 const SessionSelector = ({
   selectedSessions,
   onToggle,
 }: {
   selectedSessions: SessionName[];
   onToggle: (s: SessionName) => void;
-}) => {
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[10px] font-extrabold uppercase tracking-widest text-green-700">
-        Select Sessions
-      </p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {ALL_SESSIONS.map((s) => {
-          const isActive = selectedSessions.includes(s);
-          return (
-            <button
-              key={s}
-              onClick={() => onToggle(s)}
-              className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 py-3 px-2 transition-all duration-150 select-none font-bold text-sm
-                ${
-                  isActive
-                    ? "border-green-600 bg-green-700 text-white shadow-md scale-[1.02]"
-                    : "border-green-100 bg-white text-black hover:border-green-400 hover:text-green-800 hover:shadow-sm"
-                }`}
-            >
-              <span className="text-xl leading-none">{SESSION_ICONS[s]}</span>
-              <span className="text-xs font-extrabold tracking-wide">{s}</span>
-              {isActive && (
-                <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white/30 mt-0.5">
-                  <FaCheck style={{ fontSize: 8, color: "white" }} />
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      {selectedSessions.length === 0 && (
-        <p className="text-[11px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-          ⚠️ Please select at least one session to configure it below.
-        </p>
-      )}
+}) => (
+  <div className="flex flex-col gap-3">
+    <p className="text-[10px] font-extrabold uppercase tracking-widest text-green-700">
+      Select Sessions
+    </p>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {ALL_SESSIONS.map((s) => {
+        const isActive = selectedSessions.includes(s);
+        return (
+          <button
+            key={s}
+            onClick={() => onToggle(s)}
+            className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 py-3 px-2 transition-all duration-150 select-none font-bold text-sm
+              ${
+                isActive
+                  ? "border-green-600 bg-green-700 text-white shadow-md scale-[1.02]"
+                  : "border-green-100 bg-white text-black hover:border-green-400 hover:text-green-800 hover:shadow-sm"
+              }`}
+          >
+            <span className="text-xl leading-none">{SESSION_ICONS[s]}</span>
+            <span className="text-xs font-extrabold tracking-wide">{s}</span>
+            {isActive && (
+              <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white/30 mt-0.5">
+                <FaCheck style={{ fontSize: 8, color: "white" }} />
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
-  );
-};
+    {selectedSessions.length === 0 && (
+      <p className="text-[11px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+        ⚠️ Please select at least one session to configure it below.
+      </p>
+    )}
+  </div>
+);
 
 /* ─── Session Card ─── */
-/* CHANGE: Added `members`, `onMembersChange`, and per-session FoodMenu rendering */
 const SessionCard = ({
   session,
   config,
@@ -398,9 +451,10 @@ const SessionCard = ({
   onDeleteSlot,
   onSelectPreset,
   onFoodTypeChange,
-  onMembersChange,       // NEW prop
-  eventName,             // NEW prop for FoodMenu context
-  location,              // NEW prop for FoodMenu context
+  onMembersChange,
+  eventId,
+  eventName,
+  location,
 }: {
   session: SessionName;
   config: SessionConfig;
@@ -411,20 +465,31 @@ const SessionCard = ({
   onDeleteSlot: (id: string) => void;
   onSelectPreset: (slot: string) => void;
   onFoodTypeChange: (ft: FoodType) => void;
-  onMembersChange: (n: number) => void;  // NEW
+  onMembersChange: (n: number) => void;
   applyToAll: boolean;
-  eventName: string;     // NEW
-  location: string;      // NEW
+  eventId: string | undefined;
+  eventName: string;
+  location: string;
 }) => {
+  // Defensive: config may arrive undefined during state transitions
+  const safeConfig: SessionConfig = config ?? {
+    timeSlots: [{ id: uid(), value: SESSION_DEFAULT_TIME[session] }],
+    foodType: "",
+    members: 0,
+    menu: [],
+  };
+
   const foodBtnCls = (t: FoodType) => {
     const base =
       "min-h-10 px-3.5 py-2 rounded-2xl text-xs font-bold border transition cursor-pointer select-none";
-    if (config.foodType !== t)
+    if (safeConfig.foodType !== t)
       return `${base} bg-white text-black border-green-200 hover:border-green-500 hover:text-green-700 hover:shadow-sm`;
     if (t === "Non Veg") return `${base} bg-red-500 text-white border-red-500 shadow-sm`;
     if (t === "Veg") return `${base} bg-green-700 text-white border-green-700 shadow-sm`;
     return `${base} bg-amber-500 text-white border-amber-500 shadow-sm`;
   };
+
+  const lsKey = sessionStorageKey(eventId, session);
 
   return (
     <div
@@ -434,7 +499,6 @@ const SessionCard = ({
           : "border-green-100 bg-white shadow-[0_10px_28px_rgba(16,90,44,0.05)] hover:border-green-200 hover:shadow-[0_14px_34px_rgba(16,90,44,0.08)]"
       }`}
     >
-      {/* Session header */}
       <button
         onClick={onToggle}
         className={`w-full text-left px-4 py-4 sm:px-5 sm:py-5 transition ${
@@ -444,7 +508,6 @@ const SessionCard = ({
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              {/* CHANGE: Show session icon in card header */}
               <span className="text-base">{SESSION_ICONS[session]}</span>
               <span className="text-base font-extrabold text-black">{session}</span>
               <span className="rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-green-700 border border-green-100">
@@ -457,7 +520,7 @@ const SessionCard = ({
 
             {isSelected && (
               <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-                {config.timeSlots.map((ts) => (
+                {(safeConfig.timeSlots ?? []).map((ts) => (
                   <span
                     key={ts.id}
                     className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full"
@@ -465,23 +528,22 @@ const SessionCard = ({
                     {ts.value}
                   </span>
                 ))}
-                {config.foodType && (
+                {safeConfig.foodType && (
                   <span
                     className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
-                      config.foodType === "Non Veg"
+                      safeConfig.foodType === "Non Veg"
                         ? "bg-red-100 text-red-700"
-                        : config.foodType === "Veg"
+                        : safeConfig.foodType === "Veg"
                         ? "bg-green-100 text-green-700"
                         : "bg-amber-100 text-amber-700"
                     }`}
                   >
-                    {config.foodType}
+                    {safeConfig.foodType}
                   </span>
                 )}
-                {/* CHANGE: Show members count badge in header summary */}
-                {config.members > 0 && (
+                {safeConfig.members > 0 && (
                   <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
-                    👥 {config.members} members
+                    👥 {safeConfig.members} members
                   </span>
                 )}
               </div>
@@ -498,15 +560,13 @@ const SessionCard = ({
         </div>
       </button>
 
-      {/* Expanded content */}
       {isSelected && (
         <div className="border-t border-green-100 bg-gradient-to-b from-white to-green-50/50 px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
           <div className="grid gap-4 lg:grid-cols-[1.35fr_0.95fr]">
-            {/* Time slots panel */}
             <div className="rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
               <TimeSlotEditor
                 session={session}
-                slots={config.timeSlots}
+                slots={safeConfig.timeSlots ?? []}
                 onAdd={onAddSlot}
                 onEdit={onEditSlot}
                 onDelete={onDeleteSlot}
@@ -514,7 +574,6 @@ const SessionCard = ({
               />
             </div>
 
-            {/* Food type + members panel */}
             <div className="flex flex-col gap-3">
               <div className="rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-extrabold uppercase tracking-widest text-green-700 mb-2">
@@ -529,7 +588,6 @@ const SessionCard = ({
                 </div>
               </div>
 
-              {/* CHANGE: NEW — Number of Members input */}
               <div className="rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-extrabold uppercase tracking-widest text-green-700 mb-2">
                   Number of Members
@@ -537,7 +595,7 @@ const SessionCard = ({
                 <input
                   type="number"
                   min={0}
-                  value={config.members === 0 ? "" : config.members}
+                  value={safeConfig.members === 0 ? "" : safeConfig.members}
                   onChange={(e) => {
                     const val = parseInt(e.target.value, 10);
                     onMembersChange(isNaN(val) || val < 0 ? 0 : val);
@@ -552,15 +610,13 @@ const SessionCard = ({
             </div>
           </div>
 
-          {/* CHANGE: NEW — Per-session FoodMenu embedded inside the card */}
           <div className="mt-4">
             <FoodMenu
               eventName={eventName}
               location={location}
               session={session}
-              displayTime={config.timeSlots[0]?.value ?? ""}
-              /* Pass per-session menu via localStorage key scoped to session name */
-              storageKey={`food-menu-${session}`}
+              displayTime={safeConfig.timeSlots?.[0]?.value ?? ""}
+              storageKey={lsKey}
             />
           </div>
         </div>
@@ -570,7 +626,6 @@ const SessionCard = ({
 };
 
 /* ─── DayBookingCard ─── */
-/* CHANGE: Added onMembersChange, eventName, location props and wired to SessionCard */
 const DayBookingCard = ({
   dayBooking,
   applyToAll,
@@ -580,9 +635,10 @@ const DayBookingCard = ({
   onDeleteSlot,
   onSelectPreset,
   onFoodTypeChange,
-  onMembersChange,    // NEW
-  eventName,          // NEW
-  location,           // NEW
+  onMembersChange,
+  eventId,
+  eventName,
+  location,
 }: {
   dayBooking: DayBooking;
   isFirst: boolean;
@@ -594,35 +650,42 @@ const DayBookingCard = ({
   onDeleteSlot: (s: SessionName, id: string) => void;
   onSelectPreset: (s: SessionName, slot: string) => void;
   onFoodTypeChange: (s: SessionName, ft: FoodType) => void;
-  onMembersChange: (s: SessionName, n: number) => void;  // NEW
-  eventName: string;   // NEW
-  location: string;    // NEW
+  onMembersChange: (s: SessionName, n: number) => void;
+  eventId: string | undefined;
+  eventName: string;
+  location: string;
 }) => {
+  // Guard: sessionsConfig may be partially undefined
+  const safeSessions = Array.isArray(dayBooking.sessions) ? dayBooking.sessions : [];
+
   return (
     <div className="flex flex-col gap-4">
-      {/* CHANGE: Only render SessionCards for sessions that have been selected in the SessionSelector */}
       <div className="flex flex-col gap-4">
-        {ALL_SESSIONS.filter((s) => dayBooking.sessions.includes(s)).map((s) => (
-          <SessionCard
-            key={s}
-            session={s}
-            config={dayBooking.sessionsConfig[s]}
-            isSelected={dayBooking.sessions.includes(s)}
-            onToggle={() => onToggleSession(s)}
-            onAddSlot={() => onAddSlot(s)}
-            onEditSlot={(id, val) => onEditSlot(s, id, val)}
-            onDeleteSlot={(id) => onDeleteSlot(s, id)}
-            onSelectPreset={(slot) => onSelectPreset(s, slot)}
-            onFoodTypeChange={(ft) => onFoodTypeChange(s, ft)}
-            onMembersChange={(n) => onMembersChange(s, n)}   // NEW
-            applyToAll={applyToAll}
-            eventName={eventName}    // NEW
-            location={location}      // NEW
-          />
-        ))}
+        {ALL_SESSIONS.filter((s) => safeSessions.includes(s)).map((s) => {
+          const cfg = dayBooking.sessionsConfig?.[s];
+          if (!cfg) return null; // Skip until config is hydrated
+          return (
+            <SessionCard
+              key={s}
+              session={s}
+              config={cfg}
+              isSelected={safeSessions.includes(s)}
+              onToggle={() => onToggleSession(s)}
+              onAddSlot={() => onAddSlot(s)}
+              onEditSlot={(id, val) => onEditSlot(s, id, val)}
+              onDeleteSlot={(id) => onDeleteSlot(s, id)}
+              onSelectPreset={(slot) => onSelectPreset(s, slot)}
+              onFoodTypeChange={(ft) => onFoodTypeChange(s, ft)}
+              onMembersChange={(n) => onMembersChange(s, n)}
+              applyToAll={applyToAll}
+              eventId={eventId}
+              eventName={eventName}
+              location={location}
+            />
+          );
+        })}
 
-        {/* CHANGE: Show placeholder if no sessions selected yet */}
-        {dayBooking.sessions.length === 0 && (
+        {safeSessions.length === 0 && (
           <div className="xl:col-span-2 rounded-[26px] border-2 border-dashed border-green-200 bg-green-50/50 flex flex-col items-center justify-center py-10 px-6 text-center gap-2">
             <span className="text-3xl">🗓️</span>
             <p className="text-sm font-bold text-green-700">No sessions selected</p>
@@ -669,17 +732,27 @@ const BookFood = () => {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [savedVendors, setSavedVendors] = useState<Vendor[] | null>(null);
 
+  // Track whether initial hydration is complete (guards the LS-sync effect)
+  const [hydrated, setHydrated] = useState(false);
+
   const buildDaySlots = (startIso: string, prefill?: DayBooking[]): DayBooking[] =>
     Array.from({ length: MAX_DAYS }, (_, i) => {
       const iso = addDays(startIso, i);
+      const prefillDay = prefill?.[i];
       return {
         date: fmtDate(iso),
         isoDate: iso,
-        sessions: prefill?.[i]?.sessions ?? [],
-        sessionsConfig: prefill?.[i]?.sessionsConfig ?? makeDefaultConfig(),
+        sessions: prefillDay?.sessions ?? [],
+        // Always ensure a full, valid config — no missing keys ever
+        sessionsConfig: ensureFullConfig(
+          prefillDay?.sessionsConfig
+            ? { ...prefillDay.sessionsConfig }
+            : undefined
+        ),
       };
     });
 
+  /* ── Load event ── */
   useEffect(() => {
     const storedEvents = JSON.parse(localStorage.getItem("events") || "[]");
     const found = storedEvents.find((e: EventType) => e.id === id);
@@ -687,9 +760,12 @@ const BookFood = () => {
     if (found?.location) setLocation(found.location);
   }, [id]);
 
+  /* ── Build day slots once event is loaded ── */
   useEffect(() => {
     if (!event) return;
     const startIso = resolveStartDate(event);
+    setHydrated(false); // reset before building
+
     if (editData?.dayBookings && Array.isArray(editData.dayBookings)) {
       setDayBookings(buildDaySlots(startIso, editData.dayBookings));
       setActiveDays(
@@ -702,20 +778,70 @@ const BookFood = () => {
       setDayBookings(buildDaySlots(startIso));
       setActiveDays(1);
     }
+
+    // Mark hydrated after this synchronous build
+    // Use a microtask so state has settled before effects re-fire
+    Promise.resolve().then(() => setHydrated(true));
   }, [event]);
 
+  /* ── Restore edit data into per-session LS keys ── */
   useEffect(() => {
     if (!editData) return;
     setVegetables(editData.vegetables || []);
     setSavedVegetables(editData.vegetables || []);
     setVendors(editData.vendors || []);
     setSavedVendors(editData.vendors || []);
-    /* CHANGE: Restore per-session menus from editData if present */
+
     ALL_SESSIONS.forEach((s) => {
-      const sessionMenu = editData.sessionsMenu?.[s] ?? editData.menu ?? [];
-      localStorage.setItem(`food-menu-${s}`, JSON.stringify(sessionMenu));
+      const key = sessionStorageKey(id, s);
+
+      const sessionMenu: MenuCategory[] =
+        editData.sessionsMenu?.[s] ??
+        (s === (editData.session?.split(", ")[0] ?? "") ? (editData.menu ?? []) : []);
+
+      const firstDayConfig = editData.dayBookings?.[0]?.sessionsConfig?.[s] as SessionConfig | undefined;
+
+      const entry: SessionStorageEntry = {
+        menu: sessionMenu?.length > 0 ? sessionMenu : readMenuFromEntry(key),
+        timeSlots: firstDayConfig?.timeSlots ?? [],
+        foodType: firstDayConfig?.foodType ?? "",
+        members: firstDayConfig?.members ?? 0,
+      };
+
+      if (entry.menu.length > 0 || entry.timeSlots.length > 0) {
+        writeSessionEntry(key, entry);
+      }
     });
   }, [editData]);
+
+  /**
+   * Sync sessionsConfig → unified LS keys.
+   *
+   * CRITICAL: Only run after hydration is complete.
+   * The `hydrated` flag prevents this effect from firing with
+   * a partially-initialised `dayBookings` array (the root cause of the crash).
+   */
+  useEffect(() => {
+    if (!id || !hydrated || dayBookings.length === 0) return;
+
+    dayBookings.slice(0, activeDays).forEach((db) => {
+      if (!db || !Array.isArray(db.sessions)) return;
+      db.sessions.forEach((s) => {
+        const cfg = db.sessionsConfig?.[s];
+        if (!cfg) return; // still not ready — skip safely
+
+        const key = sessionStorageKey(id, s);
+        const existing = readSessionEntry(key);
+
+        writeSessionEntry(key, {
+          menu: existing?.menu ?? cfg.menu ?? [],
+          timeSlots: Array.isArray(cfg.timeSlots) ? cfg.timeSlots : [],
+          foodType: cfg.foodType ?? "",
+          members: typeof cfg.members === "number" ? cfg.members : 0,
+        });
+      });
+    });
+  }, [dayBookings, activeDays, id, hydrated]);
 
   /* ─── Mutators ─── */
   const updateConfig = (
@@ -726,11 +852,17 @@ const BookFood = () => {
     setDayBookings((prev) =>
       prev.map((db, i) => {
         if (i !== dayIndex) return db;
+        const currentCfg = db.sessionsConfig?.[s] ?? {
+          timeSlots: [{ id: uid(), value: SESSION_DEFAULT_TIME[s] }],
+          foodType: "" as FoodType,
+          members: 0,
+          menu: [],
+        };
         return {
           ...db,
           sessionsConfig: {
             ...db.sessionsConfig,
-            [s]: updater(db.sessionsConfig[s]),
+            [s]: updater(currentCfg),
           },
         };
       })
@@ -744,25 +876,29 @@ const BookFood = () => {
     setDayBookings((prev) =>
       prev.map((db, i) => {
         if (i !== dayIndex) return db;
-        const newConfig = { ...db.sessionsConfig };
-        db.sessions.forEach((s) => {
-          newConfig[s] = updater(newConfig[s]);
+        const newConfig = { ...(db.sessionsConfig ?? makeDefaultConfig()) };
+        (db.sessions ?? []).forEach((s) => {
+          const currentCfg = newConfig[s] ?? {
+            timeSlots: [{ id: uid(), value: SESSION_DEFAULT_TIME[s] }],
+            foodType: "" as FoodType,
+            members: 0,
+            menu: [],
+          };
+          newConfig[s] = updater(currentCfg);
         });
         return { ...db, sessionsConfig: newConfig };
       })
     );
   };
 
-  /* CHANGE: toggleSession is now driven from SessionSelector (step 1) AND still works
-     from the SessionCard header click (step 2 — for deselection) */
   const toggleSession = (dayIndex: number, s: SessionName) => {
     setDayBookings((prev) =>
       prev.map((db, i) => {
         if (i !== dayIndex) return db;
-        const has = db.sessions.includes(s);
+        const has = (db.sessions ?? []).includes(s);
         return {
           ...db,
-          sessions: has ? db.sessions.filter((x) => x !== s) : [...db.sessions, s],
+          sessions: has ? (db.sessions ?? []).filter((x) => x !== s) : [...(db.sessions ?? []), s],
         };
       })
     );
@@ -773,30 +909,28 @@ const BookFood = () => {
     if (applyToAllFlags[dayIndex]) {
       updateConfigAllSessions(dayIndex, (c) => ({
         ...c,
-        timeSlots: [...c.timeSlots, { ...newSlot, id: uid() }],
+        timeSlots: [...(c.timeSlots ?? []), { ...newSlot, id: uid() }],
       }));
     } else {
-      updateConfig(dayIndex, s, (c) => ({ ...c, timeSlots: [...c.timeSlots, newSlot] }));
+      updateConfig(dayIndex, s, (c) => ({
+        ...c,
+        timeSlots: [...(c.timeSlots ?? []), newSlot],
+      }));
     }
   };
 
-  const handleEditSlot = (
-    dayIndex: number,
-    s: SessionName,
-    slotId: string,
-    value: string
-  ) => {
+  const handleEditSlot = (dayIndex: number, s: SessionName, slotId: string, value: string) => {
     if (applyToAllFlags[dayIndex]) {
       updateConfigAllSessions(dayIndex, (c) => ({
         ...c,
-        timeSlots: c.timeSlots.map((ts, idx) =>
+        timeSlots: (c.timeSlots ?? []).map((ts, idx) =>
           idx === 0 ? { ...ts, value } : ts
         ),
       }));
     } else {
       updateConfig(dayIndex, s, (c) => ({
         ...c,
-        timeSlots: c.timeSlots.map((ts) =>
+        timeSlots: (c.timeSlots ?? []).map((ts) =>
           ts.id === slotId ? { ...ts, value } : ts
         ),
       }));
@@ -806,7 +940,7 @@ const BookFood = () => {
   const handleDeleteSlot = (dayIndex: number, s: SessionName, slotId: string) => {
     updateConfig(dayIndex, s, (c) => ({
       ...c,
-      timeSlots: c.timeSlots.filter((ts) => ts.id !== slotId),
+      timeSlots: (c.timeSlots ?? []).filter((ts) => ts.id !== slotId),
     }));
   };
 
@@ -814,11 +948,14 @@ const BookFood = () => {
     const newSlot: TimeSlot = { id: uid(), value: slot };
     if (applyToAllFlags[dayIndex]) {
       updateConfigAllSessions(dayIndex, (c) => {
-        if (c.timeSlots.some((ts) => ts.value === slot)) return c;
-        return { ...c, timeSlots: [...c.timeSlots, { ...newSlot, id: uid() }] };
+        if ((c.timeSlots ?? []).some((ts) => ts.value === slot)) return c;
+        return { ...c, timeSlots: [...(c.timeSlots ?? []), { ...newSlot, id: uid() }] };
       });
     } else {
-      updateConfig(dayIndex, s, (c) => ({ ...c, timeSlots: [...c.timeSlots, newSlot] }));
+      updateConfig(dayIndex, s, (c) => ({
+        ...c,
+        timeSlots: [...(c.timeSlots ?? []), newSlot],
+      }));
     }
   };
 
@@ -830,7 +967,6 @@ const BookFood = () => {
     }
   };
 
-  /* CHANGE: NEW handler for members count */
   const handleMembersChange = (dayIndex: number, s: SessionName, n: number) => {
     updateConfig(dayIndex, s, (c) => ({ ...c, members: n }));
   };
@@ -846,6 +982,7 @@ const BookFood = () => {
   const handleAddDay = () => {
     if (activeDays < MAX_DAYS) setActiveDays((p) => p + 1);
   };
+
   const handleRemoveDay = () => {
     if (activeDays <= 1) return;
     setDayBookings((prev) =>
@@ -858,23 +995,11 @@ const BookFood = () => {
     setActiveDays((p) => p - 1);
   };
 
-  /* CHANGE: loadMenuFromStorage now accepts an optional session key.
-     Falls back to legacy "food-menu" key when no session given. */
-  const loadMenuFromStorage = (session?: SessionName): MenuCategory[] => {
-    try {
-      const key = session ? `food-menu-${session}` : "food-menu";
-      const raw = localStorage.getItem(key);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
+  /* ─── Save ─── */
   const handleComplete = () => {
     if (saveState !== "idle") return;
     setSaveState("saving");
+
     setTimeout(() => {
       const LS_KEY = "bookFoodData";
       let existing: BookFoodStorageEntry[] = [];
@@ -886,35 +1011,48 @@ const BookFood = () => {
         existing = [];
       }
 
-      /* CHANGE: Collect per-session menus from localStorage */
+      const activeDayBookings = dayBookings.slice(0, activeDays);
+
+      // Final sync: write each active session's full config into unified LS
+      activeDayBookings.forEach((db) => {
+        if (!db || !Array.isArray(db.sessions)) return;
+        db.sessions.forEach((s) => {
+          const cfg = db.sessionsConfig?.[s];
+          if (!cfg) return;
+          const key = sessionStorageKey(id, s);
+          const existingEntry = readSessionEntry(key);
+          writeSessionEntry(key, {
+            menu: existingEntry?.menu ?? cfg.menu ?? [],
+            timeSlots: Array.isArray(cfg.timeSlots) ? cfg.timeSlots : [],
+            foodType: cfg.foodType ?? "",
+            members: typeof cfg.members === "number" ? cfg.members : 0,
+          });
+        });
+      });
+
       const sessionsMenu: Record<SessionName, MenuCategory[]> = {
-        Morning: loadMenuFromStorage("Morning"),
-        Afternoon: loadMenuFromStorage("Afternoon"),
-        Evening: loadMenuFromStorage("Evening"),
-        Night: loadMenuFromStorage("Night"),
+        Morning: readMenuFromEntry(sessionStorageKey(id, "Morning")),
+        Afternoon: readMenuFromEntry(sessionStorageKey(id, "Afternoon")),
+        Evening: readMenuFromEntry(sessionStorageKey(id, "Evening")),
+        Night: readMenuFromEntry(sessionStorageKey(id, "Night")),
       };
 
-      const activeDayBookings = dayBookings.slice(0, activeDays);
-      const firstSession = activeDayBookings[0]?.sessions[0];
+      const firstSession = activeDayBookings[0]?.sessions?.[0];
       const firstConfig = firstSession
-        ? activeDayBookings[0]?.sessionsConfig[firstSession]
+        ? activeDayBookings[0]?.sessionsConfig?.[firstSession]
         : null;
+      const menu = firstSession ? sessionsMenu[firstSession] : [];
 
-      /* Legacy `menu` field kept for backwards compatibility — uses first selected session's menu */
-      const menu = firstSession ? sessionsMenu[firstSession] : loadMenuFromStorage();
-
-      const payload: Omit<BookFoodStorageEntry, "eventId" | "version"> & {
-        sessionsMenu: Record<SessionName, MenuCategory[]>;
-      } = {
+      const payload = {
         event,
         location,
         dayBookings: activeDayBookings,
-        sessions: activeDayBookings.flatMap((d) => d.sessions),
-        session: activeDayBookings.flatMap((d) => d.sessions).join(", "),
-        time: firstConfig?.timeSlots[0]?.value ?? "",
-        foodType: firstConfig?.foodType ?? "",
+        sessions: activeDayBookings.flatMap((d) => d.sessions ?? []),
+        session: activeDayBookings.flatMap((d) => d.sessions ?? []).join(", "),
+        time: firstConfig?.timeSlots?.[0]?.value ?? "",
+        foodType: firstConfig?.foodType ?? ("" as FoodType),
         menu,
-        sessionsMenu,    // NEW: per-session menus saved to storage
+        sessionsMenu,
         vegetables,
         vendors,
         savedAt: new Date().toISOString(),
@@ -936,10 +1074,9 @@ const BookFood = () => {
       }
 
       setSaveState("saved");
-      // redirect after save (works for mobile + desktop)
-setTimeout(() => {
-  navigate(getDefaultRouteForSession(), { replace: true });
-}, 800);
+      setTimeout(() => {
+        navigate(getDefaultRouteForSession(), { replace: true });
+      }, 800);
       setTimeout(() => setSaveState("idle"), 2000);
     }, 600);
   };
@@ -948,14 +1085,7 @@ setTimeout(() => {
     if (saveState === "saving")
       return (
         <>
-          <svg
-            className="animate-spin w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          >
+          <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
           </svg>
           Saving...
@@ -964,15 +1094,7 @@ setTimeout(() => {
     if (saveState === "saved")
       return (
         <>
-          <svg
-            className="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="20 6 9 17 4 12" />
           </svg>
           Saved
@@ -995,14 +1117,13 @@ setTimeout(() => {
   ].join(" ");
 
   const eventName = event?.nameTamil || event?.nameEnglish || "";
-  const allSessionsFlat = dayBookings.slice(0, activeDays).flatMap((d) => d.sessions);
-  const firstSession = dayBookings[0]?.sessions[0];
+  const firstSession = dayBookings[0]?.sessions?.[0];
   const printCtx = {
     eventName,
     location,
-    session: allSessionsFlat.join(", "),
+    session: dayBookings.slice(0, activeDays).flatMap((d) => d.sessions ?? []).join(", "),
     displayTime: firstSession
-      ? (dayBookings[0]?.sessionsConfig[firstSession]?.timeSlots[0]?.value ?? "")
+      ? (dayBookings[0]?.sessionsConfig?.[firstSession]?.timeSlots?.[0]?.value ?? "")
       : "",
   };
 
@@ -1101,7 +1222,6 @@ setTimeout(() => {
             {dayBookings.slice(0, activeDays).map((db, dayIndex) => (
               <div key={db.isoDate} className={dayIndex > 0 ? "pt-5 border-t border-green-100" : ""}>
 
-                {/* CHANGE: NEW — Day label + SessionSelector shown per day BEFORE the cards */}
                 <div className="mb-4">
                   {activeDays > 1 && (
                     <p className="text-xs font-extrabold text-green-800 mb-3 flex items-center gap-2">
@@ -1111,13 +1231,12 @@ setTimeout(() => {
                   )}
                   <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
                     <SessionSelector
-                      selectedSessions={db.sessions}
+                      selectedSessions={db.sessions ?? []}
                       onToggle={(s) => toggleSession(dayIndex, s)}
                     />
                   </div>
                 </div>
 
-                {/* Session Cards — only visible after selecting sessions */}
                 <DayBookingCard
                   dayBooking={db}
                   isFirst={dayIndex === 0}
@@ -1129,15 +1248,15 @@ setTimeout(() => {
                   onDeleteSlot={(s, sid) => handleDeleteSlot(dayIndex, s, sid)}
                   onSelectPreset={(s, slot) => handleSelectPreset(dayIndex, s, slot)}
                   onFoodTypeChange={(s, ft) => handleFoodTypeChange(dayIndex, s, ft)}
-                  onMembersChange={(s, n) => handleMembersChange(dayIndex, s, n)}   // NEW
-                  eventName={eventName}   // NEW
-                  location={location}     // NEW
+                  onMembersChange={(s, n) => handleMembersChange(dayIndex, s, n)}
+                  eventId={id}
+                  eventName={eventName}
+                  location={location}
                 />
               </div>
             ))}
 
-            {/* Add/remove day controls */}
-            {dayBookings[0]?.sessions.length > 0 && (
+            {dayBookings[0]?.sessions?.length > 0 && (
               <div className="flex items-center gap-3 flex-wrap pt-1">
                 {activeDays < MAX_DAYS && (
                   <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -1180,16 +1299,13 @@ setTimeout(() => {
           </div>
         </div>
 
-        {/*
-          CHANGE: Shared Vegetable + Vendor sections remain common (no per-session split).
-          FoodMenu is now rendered INSIDE each SessionCard above, so no top-level FoodMenu here.
-          printCtx still passed to VegetableList/VendorList as before.
-        */}
+        {/* Shared Vegetable + Vendor sections */}
         <VegetableList
           vegetables={vegetables}
           setVegetables={setVegetables}
           savedVegetables={savedVegetables}
           setSavedVegetables={setSavedVegetables}
+          eventId={id}
           {...printCtx}
         />
         <VendorList
@@ -1197,6 +1313,7 @@ setTimeout(() => {
           setVendors={setVendors}
           savedVendors={savedVendors}
           setSavedVendors={setSavedVendors}
+          eventId={id}
           {...printCtx}
         />
 
