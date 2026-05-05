@@ -316,8 +316,8 @@ const SessionSwitcher = ({
       return (
         <motion.button
           key={sess}
-          whileTap={{ scale: 0.94 }}
-          onClick={() => onSelect(sess)}
+          whileTap={hasData ? { scale: 0.94 } : {}}
+          onClick={() => { if (hasData) onSelect(sess); }}
           className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-200 ${
             isActive
               ? "border-red-400 bg-red-50 text-red-700 shadow-sm shadow-red-100"
@@ -418,15 +418,22 @@ const DeleteActions = ({
   onDeleteAll,
   onEdit,
   onPrint,
+  disabled,
 }: {
   onDeleteSingle: () => void;
   onDeleteAll   : () => void;
   onEdit        : () => void;
   onPrint       : () => void;
+  disabled?     : boolean;
 }) => (
   <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-3 items-end">
-    <motion.button whileTap={{ scale: 0.9 }} onClick={onPrint}
-      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-blue-100 bg-blue-50 text-blue-700 text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-100 hover:border-blue-200 transition-all duration-200">
+    <motion.button whileTap={disabled ? {} : { scale: 0.9 }} onClick={() => !disabled && onPrint()}
+      disabled={disabled}
+      className={`w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 text-sm font-bold shadow-lg transition-all duration-200 ${
+        disabled
+          ? "border-gray-200 bg-gray-100 text-gray-400 opacity-60 cursor-not-allowed"
+          : "border-blue-100 bg-blue-50 text-blue-700 shadow-blue-100 hover:bg-blue-100 hover:border-blue-200"
+      }`}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="6 9 6 2 18 2 18 9"/>
         <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
@@ -435,8 +442,13 @@ const DeleteActions = ({
       <span className="hidden sm:inline">Print</span>
     </motion.button>
 
-    <motion.button whileTap={{ scale: 0.9 }} onClick={onEdit}
-      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-green-100 bg-green-50 text-green-700 text-sm font-bold shadow-lg shadow-green-100 hover:bg-green-100 hover:border-green-200 transition-all duration-200">
+    <motion.button whileTap={disabled ? {} : { scale: 0.9 }} onClick={() => !disabled && onEdit()}
+      disabled={disabled}
+      className={`w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 text-sm font-bold shadow-lg transition-all duration-200 ${
+        disabled
+          ? "border-gray-200 bg-gray-100 text-gray-400 opacity-60 cursor-not-allowed"
+          : "border-green-100 bg-green-50 text-green-700 shadow-green-100 hover:bg-green-100 hover:border-green-200"
+      }`}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -444,8 +456,13 @@ const DeleteActions = ({
       <span className="hidden sm:inline">Edit</span>
     </motion.button>
 
-    <motion.button whileTap={{ scale: 0.9 }} onClick={onDeleteSingle}
-      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-orange-100 bg-orange-50 text-orange-600 text-sm font-bold shadow-lg shadow-orange-100 hover:bg-orange-100 hover:border-orange-200 transition-all duration-200">
+    <motion.button whileTap={disabled ? {} : { scale: 0.9 }} onClick={() => !disabled && onDeleteSingle()}
+      disabled={disabled}
+      className={`w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 text-sm font-bold shadow-lg transition-all duration-200 ${
+        disabled
+          ? "border-gray-200 bg-gray-100 text-gray-400 opacity-60 cursor-not-allowed"
+          : "border-orange-100 bg-orange-50 text-orange-600 shadow-orange-100 hover:bg-orange-100 hover:border-orange-200"
+      }`}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -455,8 +472,13 @@ const DeleteActions = ({
       <span className="hidden sm:inline">Delete</span>
     </motion.button>
 
-    <motion.button whileTap={{ scale: 0.9 }} onClick={onDeleteAll}
-      className="w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 border-red-100 bg-red-50 text-red-600 text-sm font-bold shadow-lg shadow-red-100 hover:bg-red-100 hover:border-red-200 transition-all duration-200">
+    <motion.button whileTap={disabled ? {} : { scale: 0.9 }} onClick={() => !disabled && onDeleteAll()}
+      disabled={disabled}
+      className={`w-12 h-12 sm:w-44 sm:h-12 flex items-center justify-center gap-2 rounded-full border-2 text-sm font-bold shadow-lg transition-all duration-200 ${
+        disabled
+          ? "border-gray-200 bg-gray-100 text-gray-400 opacity-60 cursor-not-allowed"
+          : "border-red-100 bg-red-50 text-red-600 shadow-red-100 hover:bg-red-100 hover:border-red-200"
+      }`}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>
         <line x1="9" y1="10" x2="9" y2="20"/><line x1="12" y1="10" x2="12" y2="20"/>
@@ -675,10 +697,17 @@ const FoodDetailBody = ({
       `;
     };
 
-    const hasM = availableSessions.includes("Morning");
-    const hasA = availableSessions.includes("Afternoon");
-    const hasE = availableSessions.includes("Evening");
-    const hasN = availableSessions.includes("Night");
+    const sessionHasValidMenu = (sess: string) => {
+      const menu = sess === activeSession ? (sessionData?.menu ?? []) : (readSessionMenu(v.eventId, sess)?.menu ?? []);
+      return menu.some((c) => c.items?.some((i) => i.trim()));
+    };
+
+    const validSessions = availableSessions.filter(sessionHasValidMenu);
+
+    const hasM = validSessions.includes("Morning");
+    const hasA = validSessions.includes("Afternoon");
+    const hasE = validSessions.includes("Evening");
+    const hasN = validSessions.includes("Night");
 
     let menuHTML = "";
     if (hasM && hasA && hasE && hasN) {
@@ -712,8 +741,8 @@ const FoodDetailBody = ({
     } else if (hasM) {
       menuHTML = `<div>${getSessionMenuHTML("Morning")}</div>`;
     } else {
-      menuHTML = availableSessions.length > 0
-        ? availableSessions.map(sess => `<div>${getSessionMenuHTML(sess)}</div>`).join("")
+      menuHTML = validSessions.length > 0
+        ? validSessions.map(sess => `<div>${getSessionMenuHTML(sess)}</div>`).join("")
         : `<h2>🍛 Menu</h2><table><thead><tr><th>Category</th><th>Items</th></tr></thead><tbody><tr><td colspan='2' style='text-align:center;color:#6b7280;'>No menu items.</td></tr></tbody></table>`;
     }
 
@@ -937,6 +966,7 @@ const FoodDetailBody = ({
                 onDeleteAll={onDeleteAll}
                 onEdit={onEdit}
                 onPrint={handlePrintAll}
+                disabled={sessionData === null || !availableSessions.includes(activeSession)}
               />
             </div>
           </div>
@@ -1153,10 +1183,18 @@ const AdminFoodView = () => {
     setVersions(built);
     setActive(0);
 
-    // Determine which sessions have LS data
-    const hasSess = ALL_SESSIONS.filter(
-      (s) => !!localStorage.getItem(`food-menu-${id}-${s}`)
-    );
+    // Determine which sessions have valid menu data
+    const hasSess = ALL_SESSIONS.filter((s) => {
+      const raw = localStorage.getItem(`food-menu-${id}-${s}`);
+      if (!raw) return false;
+      try {
+        const parsed = JSON.parse(raw);
+        const menu = Array.isArray(parsed) ? parsed : (parsed.menu ?? []);
+        return menu.some((c: any) => c.items?.some((i: string) => i.trim()));
+      } catch {
+        return false;
+      }
+    });
     setAvailableSessions(hasSess);
 
     // Default active session: the one matching the latest save, or first available
